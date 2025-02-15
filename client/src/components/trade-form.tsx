@@ -121,7 +121,7 @@ export function TradeForm({ symbol }: TradeFormProps) {
             }}
           >
             <SelectTrigger>
-              <SelectValue />
+              <SelectValue placeholder="Select trade type" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="buy">Buy</SelectItem>
@@ -148,14 +148,6 @@ export function TradeForm({ symbol }: TradeFormProps) {
               {...form.register("price", { valueAsNumber: true })}
               disabled
             />
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => fetchPrice()}
-              className="flex-shrink-0"
-            >
-              <Loader2 className="h-4 w-4" />
-            </Button>
           </div>
           <p className="text-sm text-muted-foreground">
             Price updates automatically every 30 seconds

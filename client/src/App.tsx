@@ -12,9 +12,11 @@ import { ProtectedRoute } from "./lib/protected-route";
 function Router() {
   return (
     <Switch>
-      <ProtectedRoute path="/" component={HomePage} />
-      <ProtectedRoute path="/trade/:symbol" component={TradePage} />
       <Route path="/auth" component={AuthPage} />
+      <ProtectedRoute path="/" component={HomePage} />
+      <Route path="/trade/:symbol">
+        {(params) => <ProtectedRoute path="/trade/:symbol" component={() => <TradePage />} />}
+      </Route>
       <Route component={NotFound} />
     </Switch>
   );
