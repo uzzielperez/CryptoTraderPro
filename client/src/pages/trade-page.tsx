@@ -2,11 +2,12 @@ import { useParams } from "wouter";
 import { NavSidebar } from "@/components/nav-sidebar";
 import { PriceChart } from "@/components/price-chart";
 import { TradeForm } from "@/components/trade-form";
+import { RiskDashboard } from "@/components/risk-dashboard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default function TradePage() {
   const { symbol } = useParams();
-  
+
   if (!symbol) return null;
 
   return (
@@ -23,8 +24,9 @@ export default function TradePage() {
                 <div className="lg:col-span-2">
                   <PriceChart symbol={symbol} />
                 </div>
-                <div>
+                <div className="space-y-6">
                   <TradeForm symbol={symbol} />
+                  <RiskDashboard symbol={symbol} />
                 </div>
               </div>
             </CardContent>
