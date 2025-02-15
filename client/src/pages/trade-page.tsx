@@ -70,7 +70,7 @@ export default function TradePage() {
     <div className="flex h-screen bg-background">
       <NavSidebar />
       <main className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-7xl mx-auto space-y-6">
+        <div className="max-w-[1800px] mx-auto space-y-6">
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold">{currentSymbol}/USD</h1>
             <Select value={currentSymbol} onValueChange={handleSymbolChange}>
@@ -87,9 +87,9 @@ export default function TradePage() {
             </Select>
           </div>
 
-          <div className="grid lg:grid-cols-2 gap-6">
-            {/* Left panel: Chart and AI Strategy */}
-            <div className="space-y-6">
+          <div className="grid grid-cols-3 gap-6">
+            {/* Left and middle panel (2/3): Chart and AI Strategy */}
+            <div className="col-span-2 space-y-6">
               <Card>
                 <CardContent className="pt-6">
                   <PriceChart symbol={currentSymbol} />
@@ -107,7 +107,7 @@ export default function TradePage() {
               />
             </div>
 
-            {/* Right panel: Trading Form and Risk Dashboard */}
+            {/* Right panel (1/3): Trading Form and Risk Dashboard */}
             <div className="space-y-6">
               <TradeForm symbol={currentSymbol} />
               <RiskDashboard symbol={currentSymbol} />
