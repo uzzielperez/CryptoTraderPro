@@ -8,7 +8,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { SMA, RSI } from 'technicalindicators';
+import { SMA, RSI, BollingerBands } from 'technicalindicators';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -34,7 +34,9 @@ export function TechnicalAnalysis({ symbol, data }: TechnicalAnalysisProps) {
     time: new Date(item.time).toLocaleTimeString(),
     price: item.price,
     sma: null,
-    rsi: null
+    rsi: null,
+    upperBand: null,
+    lowerBand: null
   }));
 
   if (indicators.sma) {
@@ -60,6 +62,24 @@ export function TechnicalAnalysis({ symbol, data }: TechnicalAnalysisProps) {
     const rsiWithPadding = [...Array(14).fill(null), ...rsiValues];
     chartData.forEach((item, index) => {
       item.rsi = rsiWithPadding[index];
+    });
+  }
+
+  if (indicators.bollinger) {
+    const bollingerValues = BollingerBands.calculate({
+      period: 20,
+      stdDev: 2,
+      values: data.map(d => d.price)
+    });
+
+    // Pad the beginning of the Bollinger Bands data with nulls
+    const padding = Array(19).fill(null);
+    const upperBandWithPadding = [...padding, ...bollingerValues.map(b => b.upper)];
+    const lowerBandWithPadding = [...padding, ...bollingerValues.map(b => b.lower)];
+
+    chartData.forEach((item, index) => {
+      item.upperBand = upperBandWithPadding[index];
+      item.lowerBand = lowerBandWithPadding[index];
     });
   }
 
@@ -127,7 +147,7 @@ export function TechnicalAnalysis({ symbol, data }: TechnicalAnalysisProps) {
               )}
               <Tooltip
                 formatter={(value: number, name: string) => {
-                  if (name === 'price' || name === 'sma') {
+                  if (name === 'price' || name === 'sma' || name === 'upperBand' || name === 'lowerBand') {
                     return [`$${value.toLocaleString()}`, name.toUpperCase()];
                   }
                   return [value, name.toUpperCase()];
@@ -159,6 +179,28 @@ export function TechnicalAnalysis({ symbol, data }: TechnicalAnalysisProps) {
                   dot={false}
                   strokeWidth={2}
                 />
+              )}
+              {indicators.bollinger && (
+                <>
+                  <Line
+                    type="monotone"
+                    dataKey="upperBand"
+                    yAxisId="price"
+                    stroke="#4CAF50"
+                    dot={false}
+                    strokeWidth={1}
+                    strokeDasharray="3 3"
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="lowerBand"
+                    yAxisId="price"
+                    stroke="#4CAF50"
+                    dot={false}
+                    strokeWidth={1}
+                    strokeDasharray="3 3"
+                  />
+                </>
               )}
             </LineChart>
           </ResponsiveContainer>
