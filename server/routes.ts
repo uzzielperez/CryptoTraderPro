@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { setupAuth } from "./auth";
 import { insertTradeSchema, insertWatchlistSchema } from "@shared/schema";
 import { calculateRiskMetrics, executeOrder } from "./coinbase-service";
+import { generateTradingStrategy } from "./ai-strategy-service";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   setupAuth(app);
@@ -91,6 +92,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!req.user) return res.sendStatus(401);
     await storage.removeFromWatchlist(req.user.id, req.params.symbol);
     res.sendStatus(204);
+  });
+
+  app.post("/api/trading-strategy", async (req, res) => {
+    if (!req.user) return res.sendStatus(401);
+
+    try {
+      const { symbol, currentPrice, historicalPrices, technicalIndicators } = req.body;
+
+      if (!symbol || !currentPrice || !historicalPrices) {
+        return res.status(400).json({ message: "Missing required data" });
+      }
+
+      const strategy = await generateTradingStrategy(
+        symbol,
+        currentPrice,
+        historicalPrices,
+        technicalIndicators
+      );
+
+      res.json(strategy);
+    } catch (error) {
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to generate trading strategy" 
+      });
+    }
   });
 
   const httpServer = createServer(app);

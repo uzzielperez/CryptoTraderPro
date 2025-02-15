@@ -5,7 +5,7 @@ import { TradeForm } from "@/components/trade-form";
 import { RiskDashboard } from "@/components/risk-dashboard";
 import { TechnicalAnalysis } from "@/components/technical-analysis";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { 
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import { getSupportedSymbols } from "@/lib/price-service";
 import { useState, useEffect } from "react";
+import { AIStrategy } from "@/components/ai-strategy";
 
 export default function TradePage() {
   const { symbol } = useParams();
@@ -94,6 +95,16 @@ export default function TradePage() {
                 </div>
                 <div className="space-y-6">
                   <TradeForm symbol={currentSymbol} />
+                  <AIStrategy
+                    symbol={currentSymbol}
+                    currentPrice={priceData[priceData.length - 1]?.price ?? 0}
+                    historicalPrices={priceData.map(d => d.price)}
+                    technicalIndicators={{
+                      sma: priceData[priceData.length - 1]?.sma,
+                      rsi: priceData[priceData.length - 1]?.rsi,
+                      volatility: 2 // Using our mock 2% volatility
+                    }}
+                  />
                   <RiskDashboard symbol={currentSymbol} />
                 </div>
               </div>
