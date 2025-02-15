@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertTradeSchema } from "@shared/schema";
@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getPrice } from "@/lib/price-service";
+import { Loader2 } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -23,17 +25,55 @@ interface TradeFormProps {
 
 export function TradeForm({ symbol }: TradeFormProps) {
   const [type, setType] = useState<"buy" | "sell">("buy");
+  const [price, setPrice] = useState<number | null>(null);
+  const [isLoadingPrice, setIsLoadingPrice] = useState(true);
   const { toast } = useToast();
-  
+
   const form = useForm({
     resolver: zodResolver(insertTradeSchema),
     defaultValues: {
       symbol,
       amount: 0,
-      price: getMockPrice(symbol),
+      price: 0,
       type,
     },
   });
+
+  // Fetch real-time price
+  useEffect(() => {
+    let isMounted = true;
+
+    async function fetchPrice() {
+      try {
+        const currentPrice = await getPrice(symbol);
+        if (isMounted) {
+          setPrice(currentPrice);
+          form.setValue("price", currentPrice);
+          setIsLoadingPrice(false);
+        }
+      } catch (error) {
+        if (isMounted) {
+          setIsLoadingPrice(false);
+          toast({
+            title: "Error fetching price",
+            description: error instanceof Error ? error.message : "Unknown error",
+            variant: "destructive",
+          });
+        }
+      }
+    }
+
+    // Fetch initial price
+    fetchPrice();
+
+    // Set up polling for price updates
+    const interval = setInterval(fetchPrice, 30000); // Update every 30 seconds
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [symbol, form, toast]);
 
   const tradeMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -56,6 +96,14 @@ export function TradeForm({ symbol }: TradeFormProps) {
       });
     },
   });
+
+  if (isLoadingPrice) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <Form {...form}>
@@ -93,32 +141,35 @@ export function TradeForm({ symbol }: TradeFormProps) {
 
         <div className="space-y-2">
           <Label>Price (USD)</Label>
-          <Input
-            type="number"
-            step="0.01"
-            {...form.register("price", { valueAsNumber: true })}
-          />
+          <div className="flex items-center space-x-2">
+            <Input
+              type="number"
+              step="0.01"
+              {...form.register("price", { valueAsNumber: true })}
+              disabled
+            />
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => fetchPrice()}
+              className="flex-shrink-0"
+            >
+              <Loader2 className="h-4 w-4" />
+            </Button>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Price updates automatically every 30 seconds
+          </p>
         </div>
 
         <Button
           type="submit"
           className="w-full"
-          disabled={tradeMutation.isPending}
+          disabled={tradeMutation.isPending || !price}
         >
           {type === "buy" ? "Buy" : "Sell"} {symbol}
         </Button>
       </form>
     </Form>
   );
-}
-
-// Mock price function - in a real app this would come from an API
-function getMockPrice(symbol: string): number {
-  const basePrice = {
-    BTC: 50000,
-    ETH: 3000,
-    DOGE: 0.15,
-  }[symbol] ?? 100;
-  
-  return basePrice * (0.9 + Math.random() * 0.2);
 }
