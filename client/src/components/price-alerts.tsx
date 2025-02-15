@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, BellRing, X } from "lucide-react";
+import { Loader2, BellRing, X, WifiOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import * as z from 'zod';
@@ -22,12 +22,15 @@ import * as z from 'zod';
 type PriceAlertFormData = z.infer<typeof insertPriceAlertSchema>;
 
 const WEBSOCKET_RETRY_INTERVAL = 5000;
-const MAX_RETRIES = 5;
+const MAX_RETRIES = 3;
+const BACKOFF_MULTIPLIER = 1.5;
 
 export function PriceAlerts({ symbol }: { symbol: string }) {
   const { toast } = useToast();
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [retryCount, setRetryCount] = useState(0);
+  const [isConnected, setIsConnected] = useState(false);
+  const [retryTimeout, setRetryTimeout] = useState<number>(WEBSOCKET_RETRY_INTERVAL);
 
   const connectWebSocket = useCallback(() => {
     if (retryCount >= MAX_RETRIES) {
@@ -39,12 +42,29 @@ export function PriceAlerts({ symbol }: { symbol: string }) {
       return;
     }
 
+    // Close existing socket if any
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.close();
+    }
+
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+    // Create WebSocket with credentials
     const ws = new WebSocket(wsUrl);
 
+    // Set credentials mode for the WebSocket
+    ws.onbeforeopen = () => {
+      if ('credentials' in Request.prototype) {
+        // Modern browsers
+        fetch(wsUrl, { credentials: 'include' });
+      }
+    };
+
     ws.onopen = () => {
+      setIsConnected(true);
       setRetryCount(0);
+      setRetryTimeout(WEBSOCKET_RETRY_INTERVAL);
       toast({
         title: "Connected",
         description: "Price alert service connected successfully.",
@@ -54,6 +74,10 @@ export function PriceAlerts({ symbol }: { symbol: string }) {
     ws.onmessage = (event) => {
       try {
         const alert = JSON.parse(event.data);
+        if (alert.type === "connection_established") {
+          console.log("WebSocket connection established with server");
+          return;
+        }
         toast({
           title: "Price Alert",
           description: `${alert.symbol} has reached ${alert.targetPrice}!`,
@@ -63,22 +87,47 @@ export function PriceAlerts({ symbol }: { symbol: string }) {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+      console.log("WebSocket closed with code:", event.code);
+      setIsConnected(false);
       setSocket(null);
-      setRetryCount(prev => prev + 1);
-      setTimeout(connectWebSocket, WEBSOCKET_RETRY_INTERVAL);
+
+      if (retryCount < MAX_RETRIES) {
+        const nextRetryTimeout = retryTimeout * BACKOFF_MULTIPLIER;
+        setRetryTimeout(nextRetryTimeout);
+        setRetryCount(prev => prev + 1);
+        setTimeout(connectWebSocket, nextRetryTimeout);
+      }
     };
 
     ws.onerror = (error) => {
       console.error("WebSocket error:", error);
+      setIsConnected(false);
       ws.close();
     };
 
     setSocket(ws);
-  }, [toast, retryCount]);
+  }, [toast, retryCount, retryTimeout, socket]);
 
   useEffect(() => {
-    connectWebSocket();
+    // Check authentication status before connecting
+    fetch('/api/user', { credentials: 'include' })
+      .then(response => {
+        if (response.ok) {
+          connectWebSocket();
+        } else {
+          console.error('User not authenticated');
+          toast({
+            title: "Authentication Error",
+            description: "Please log in to use price alerts.",
+            variant: "destructive",
+          });
+        }
+      })
+      .catch(error => {
+        console.error('Error checking authentication:', error);
+      });
+
     return () => {
       if (socket?.readyState === WebSocket.OPEN) {
         socket.close();
@@ -144,6 +193,9 @@ export function PriceAlerts({ symbol }: { symbol: string }) {
         <CardTitle className="flex items-center gap-2">
           <BellRing className="h-5 w-5" />
           Price Alert Management
+          {!isConnected && (
+            <WifiOff className="h-4 w-4 text-destructive" />
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -179,7 +231,7 @@ export function PriceAlerts({ symbol }: { symbol: string }) {
                 </div>
                 <Button
                   type="submit"
-                  disabled={createMutation.isPending}
+                  disabled={createMutation.isPending || !isConnected}
                   className="w-full"
                 >
                   {createMutation.isPending ? (

@@ -26,6 +26,9 @@ interface SessionIncomingMessage extends IncomingMessage {
   session?: CustomSession;
 }
 
+const HEARTBEAT_INTERVAL = 30000;
+const HEARTBEAT_TIMEOUT = 35000;
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Setup authentication first
   setupAuth(app);
@@ -316,72 +319,127 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const httpServer = createServer(app);
 
-  // Setup WebSocket server for real-time price alerts with improved error handling
+  // Setup WebSocket server with improved error handling and authentication
   const wss = new WebSocketServer({
     server: httpServer,
     path: "/ws",
-    verifyClient: (info, callback) => {
-      const req = info.req as SessionIncomingMessage;
-      console.log("WebSocket auth check - Session:", !!req.session, "User:", req.session?.passport?.user);
+    verifyClient: async (info, callback) => {
+      try {
+        const req = info.req as SessionIncomingMessage;
 
-      if (!req.session?.passport?.user) {
-        console.log("WebSocket connection rejected - No authenticated user");
-        callback(false, 401, 'Unauthorized');
-        return;
+        // Log detailed authentication information
+        console.log("WebSocket auth check - Headers:", req.headers);
+        console.log("WebSocket auth check - Session:", !!req.session);
+        console.log("WebSocket auth check - User:", req.session?.passport?.user);
+
+        if (!req.session?.passport?.user) {
+          console.log("WebSocket connection rejected - No authenticated user");
+          callback(false, 401, 'Unauthorized');
+          return;
+        }
+
+        // Add rate limiting
+        const userId = req.session.passport.user;
+        const userConnections = clients.get(userId)?.size || 0;
+        if (userConnections >= 5) {
+          console.log(`WebSocket connection rejected - Too many connections for user ${userId}`);
+          callback(false, 429, 'Too Many Connections');
+          return;
+        }
+
+        console.log("WebSocket connection accepted for user:", userId);
+        callback(true);
+      } catch (error) {
+        console.error("Error in WebSocket verification:", error);
+        callback(false, 500, 'Internal Server Error');
       }
-      console.log("WebSocket connection accepted for user:", req.session.passport.user);
-      callback(true);
     }
   });
 
-  // Keep track of connected clients by user ID
+  // Keep track of connected clients by user ID with improved connection management
   const clients = new Map<number, Set<WebSocketWithSession>>();
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
-    const sessionReq = req as SessionIncomingMessage;
-    const userId = sessionReq.session?.passport?.user;
+    try {
+      const sessionReq = req as SessionIncomingMessage;
+      const userId = sessionReq.session?.passport?.user;
 
-    if (!userId) {
-      ws.close();
-      return;
-    }
-
-    const wsWithSession = ws as WebSocketWithSession;
-    wsWithSession.isAlive = true;
-    wsWithSession.userId = userId;
-
-    if (!clients.has(userId)) {
-      clients.set(userId, new Set());
-    }
-    clients.get(userId)?.add(wsWithSession);
-
-    wsWithSession.on("pong", () => {
-      wsWithSession.isAlive = true;
-    });
-
-    wsWithSession.on("close", () => {
-      const userClients = clients.get(userId);
-      userClients?.delete(wsWithSession);
-      if (userClients?.size === 0) {
-        clients.delete(userId);
+      if (!userId) {
+        console.log("WebSocket connection terminated - Invalid user session");
+        ws.close(1008, "Invalid session");
+        return;
       }
-    });
+
+      const wsWithSession = ws as WebSocketWithSession;
+      wsWithSession.isAlive = true;
+      wsWithSession.userId = userId;
+
+      // Initialize user's connection set if it doesn't exist
+      if (!clients.has(userId)) {
+        clients.set(userId, new Set());
+      }
+      clients.get(userId)?.add(wsWithSession);
+
+      // Send initial connection confirmation
+      try {
+        wsWithSession.send(JSON.stringify({ 
+          type: "connection_established",
+          userId: userId
+        }));
+      } catch (error) {
+        console.error("Error sending connection confirmation:", error);
+      }
+
+      wsWithSession.on("pong", () => {
+        wsWithSession.isAlive = true;
+      });
+
+      wsWithSession.on("error", (error) => {
+        console.error(`WebSocket error for user ${userId}:`, error);
+        wsWithSession.terminate();
+      });
+
+      wsWithSession.on("close", (code, reason) => {
+        console.log(`WebSocket closed for user ${userId}. Code: ${code}, Reason: ${reason}`);
+        const userClients = clients.get(userId);
+        if (userClients) {
+          userClients.delete(wsWithSession);
+          if (userClients.size === 0) {
+            clients.delete(userId);
+          }
+        }
+      });
+    } catch (error) {
+      console.error("Error in WebSocket connection handler:", error);
+      ws.close(1011, "Unexpected error");
+    }
   });
 
-  // Add WebSocket heartbeat to detect stale connections
-  const interval = setInterval(() => {
+  // Heartbeat mechanism with improved error handling
+  const heartbeat = setInterval(() => {
     wss.clients.forEach((ws: WebSocket) => {
       const wsWithSession = ws as WebSocketWithSession;
       if (!wsWithSession.isAlive) {
+        console.log(`Terminating inactive connection for user ${wsWithSession.userId}`);
         return wsWithSession.terminate();
       }
       wsWithSession.isAlive = false;
-      wsWithSession.ping();
+      try {
+        wsWithSession.ping();
+      } catch (error) {
+        console.error("Error sending ping:", error);
+        wsWithSession.terminate();
+      }
     });
-  }, 30000);
+  }, HEARTBEAT_INTERVAL);
 
   wss.on("close", () => {
-    clearInterval(interval);
+    clearInterval(heartbeat);
+  });
+
+  // Error event handler for the WebSocket server
+  wss.on("error", (error) => {
+    console.error("WebSocket server error:", error);
   });
 
   // Expose clients map so price monitoring service can send notifications
