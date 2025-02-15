@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { insertPriceAlertSchema } from "@shared/schema";
+import { insertPriceAlertSchema, type PriceAlert } from "@shared/schema";
 import { Form } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -28,8 +28,7 @@ export function PriceAlerts({ symbol }: { symbol: string }) {
   const { toast } = useToast();
   const [socket, setSocket] = useState<WebSocket | null>(null);
 
-  // Connect to WebSocket for real-time alerts
-  useState(() => {
+  useEffect(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
     const ws = new WebSocket(wsUrl);
@@ -43,8 +42,13 @@ export function PriceAlerts({ symbol }: { symbol: string }) {
     };
 
     setSocket(ws);
-    return () => ws.close();
-  }, []);
+
+    return () => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      }
+    };
+  }, [toast]);
 
   const form = useForm<PriceAlertFormData>({
     resolver: zodResolver(insertPriceAlertSchema),
@@ -59,7 +63,7 @@ export function PriceAlerts({ symbol }: { symbol: string }) {
     queryKey: ["/api/price-alerts"],
     queryFn: async () => {
       const response = await apiRequest("GET", "/api/price-alerts");
-      return response.json();
+      return response.json() as Promise<PriceAlert[]>;
     },
   });
 
@@ -161,7 +165,7 @@ export function PriceAlerts({ symbol }: { symbol: string }) {
               No active price alerts
             </p>
           ) : (
-            alerts?.map((alert) => (
+            alerts?.map((alert: PriceAlert) => (
               <div
                 key={alert.id}
                 className="flex items-center justify-between rounded-lg border p-3"

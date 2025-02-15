@@ -1,9 +1,9 @@
-import { InsertUser, User, Trade, Portfolio, Watchlist, InsertTrade, InsertWatchlist } from "@shared/schema";
+import { InsertUser, User, Trade, Portfolio, Watchlist, InsertTrade, InsertWatchlist, InsertPriceAlert, PriceAlert } from "@shared/schema";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { db } from "./db";
 import { eq, and } from "drizzle-orm";
-import { users, trades, portfolio, watchlist } from "@shared/schema";
+import { users, trades, portfolio, watchlist, priceAlerts } from "@shared/schema";
 import { pool } from "./db";
 
 const PostgresSessionStore = connectPg(session);
@@ -26,6 +26,12 @@ export interface IStorage {
   getWatchlist(userId: number): Promise<Watchlist[]>;
   addToWatchlist(userId: number, symbol: string): Promise<Watchlist>;
   removeFromWatchlist(userId: number, symbol: string): Promise<void>;
+
+  // Price Alerts
+  getPriceAlerts(userId: number): Promise<PriceAlert[]>;
+  getPriceAlert(id: number): Promise<PriceAlert | undefined>;
+  createPriceAlert(userId: number, alert: InsertPriceAlert): Promise<PriceAlert>;
+  deactivatePriceAlert(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -110,6 +116,36 @@ export class DatabaseStorage implements IStorage {
     await db
       .delete(watchlist)
       .where(and(eq(watchlist.userId, userId), eq(watchlist.symbol, symbol)));
+  }
+
+  async getPriceAlerts(userId: number): Promise<PriceAlert[]> {
+    return db
+      .select()
+      .from(priceAlerts)
+      .where(and(eq(priceAlerts.userId, userId), eq(priceAlerts.isActive, true)));
+  }
+
+  async getPriceAlert(id: number): Promise<PriceAlert | undefined> {
+    const [alert] = await db
+      .select()
+      .from(priceAlerts)
+      .where(eq(priceAlerts.id, id));
+    return alert;
+  }
+
+  async createPriceAlert(userId: number, alert: InsertPriceAlert): Promise<PriceAlert> {
+    const [newAlert] = await db
+      .insert(priceAlerts)
+      .values({ ...alert, userId })
+      .returning();
+    return newAlert;
+  }
+
+  async deactivatePriceAlert(id: number): Promise<void> {
+    await db
+      .update(priceAlerts)
+      .set({ isActive: false, triggeredAt: new Date() })
+      .where(eq(priceAlerts.id, id));
   }
 }
 

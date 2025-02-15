@@ -7,6 +7,20 @@ import { insertTradeSchema, insertWatchlistSchema, insertPriceAlertSchema } from
 import { calculateRiskMetrics, executeOrder } from "./coinbase-service";
 import { generateTradingStrategy } from "./ai-strategy-service";
 import { algorithmicTradingService } from "./algorithmic-trading-service";
+import type { IncomingMessage } from "http";
+import type { WebSocket as WS } from "ws";
+
+interface WebSocketWithSession extends WS {
+  isAlive: boolean;
+}
+
+interface SessionIncomingMessage extends IncomingMessage {
+  session?: Express.Session & {
+    passport?: {
+      user?: number;
+    };
+  };
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   setupAuth(app);
@@ -190,9 +204,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
   // Keep track of connected clients by user ID
-  const clients = new Map<number, Set<WebSocket>>();
+  const clients = new Map<number, Set<WebSocketWithSession>>();
 
-  wss.on("connection", (ws, req) => {
+  wss.on("connection", (ws: WebSocketWithSession, req: SessionIncomingMessage) => {
     if (!req.session?.passport?.user) {
       ws.close();
       return;
@@ -204,6 +218,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     clients.get(userId)?.add(ws);
 
+    ws.isAlive = true;
+    ws.on("pong", () => {
+      ws.isAlive = true;
+    });
+
     ws.on("close", () => {
       const userClients = clients.get(userId);
       userClients?.delete(ws);
@@ -211,6 +230,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         clients.delete(userId);
       }
     });
+  });
+
+  // Add WebSocket heartbeat to detect stale connections
+  const interval = setInterval(() => {
+    wss.clients.forEach((ws: WebSocketWithSession) => {
+      if (!ws.isAlive) {
+        return ws.terminate();
+      }
+      ws.isAlive = false;
+      ws.ping();
+    });
+  }, 30000);
+
+  wss.on("close", () => {
+    clearInterval(interval);
   });
 
   // Expose clients map so price monitoring service can send notifications
