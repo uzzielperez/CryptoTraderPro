@@ -50,63 +50,65 @@ export function PriceAlerts({ symbol }: { symbol: string }) {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
 
-    // Create WebSocket with credentials
-    const ws = new WebSocket(wsUrl);
+    // First ensure we have a valid session
+    fetch(wsUrl, { 
+      method: 'GET',
+      credentials: 'include',
+      mode: 'cors'
+    }).then(() => {
+      // Create WebSocket with session cookie
+      const ws = new WebSocket(wsUrl);
 
-    // Set credentials mode for the WebSocket
-    ws.onbeforeopen = () => {
-      if ('credentials' in Request.prototype) {
-        // Modern browsers
-        fetch(wsUrl, { credentials: 'include' });
-      }
-    };
-
-    ws.onopen = () => {
-      setIsConnected(true);
-      setRetryCount(0);
-      setRetryTimeout(WEBSOCKET_RETRY_INTERVAL);
-      toast({
-        title: "Connected",
-        description: "Price alert service connected successfully.",
-      });
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const alert = JSON.parse(event.data);
-        if (alert.type === "connection_established") {
-          console.log("WebSocket connection established with server");
-          return;
-        }
+      ws.onopen = () => {
+        setIsConnected(true);
+        setRetryCount(0);
+        setRetryTimeout(WEBSOCKET_RETRY_INTERVAL);
         toast({
-          title: "Price Alert",
-          description: `${alert.symbol} has reached ${alert.targetPrice}!`,
+          title: "Connected",
+          description: "Price alert service connected successfully.",
         });
-      } catch (error) {
-        console.error("Error parsing alert message:", error);
-      }
-    };
+      };
 
-    ws.onclose = (event) => {
-      console.log("WebSocket closed with code:", event.code);
+      ws.onmessage = (event) => {
+        try {
+          const alert = JSON.parse(event.data);
+          if (alert.type === "connection_established") {
+            console.log("WebSocket connection established with server");
+            return;
+          }
+          toast({
+            title: "Price Alert",
+            description: `${alert.symbol} has reached ${alert.targetPrice}!`,
+          });
+        } catch (error) {
+          console.error("Error parsing alert message:", error);
+        }
+      };
+
+      ws.onclose = (event) => {
+        console.log("WebSocket closed with code:", event.code);
+        setIsConnected(false);
+        setSocket(null);
+
+        if (retryCount < MAX_RETRIES) {
+          const nextRetryTimeout = retryTimeout * BACKOFF_MULTIPLIER;
+          setRetryTimeout(nextRetryTimeout);
+          setRetryCount(prev => prev + 1);
+          setTimeout(connectWebSocket, nextRetryTimeout);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        setIsConnected(false);
+        ws.close();
+      };
+
+      setSocket(ws);
+    }).catch(error => {
+      console.error("Failed to establish WebSocket connection:", error);
       setIsConnected(false);
-      setSocket(null);
-
-      if (retryCount < MAX_RETRIES) {
-        const nextRetryTimeout = retryTimeout * BACKOFF_MULTIPLIER;
-        setRetryTimeout(nextRetryTimeout);
-        setRetryCount(prev => prev + 1);
-        setTimeout(connectWebSocket, nextRetryTimeout);
-      }
-    };
-
-    ws.onerror = (error) => {
-      console.error("WebSocket error:", error);
-      setIsConnected(false);
-      ws.close();
-    };
-
-    setSocket(ws);
+    });
   }, [toast, retryCount, retryTimeout, socket]);
 
   useEffect(() => {
