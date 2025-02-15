@@ -87,29 +87,32 @@ export default function TradePage() {
             </Select>
           </div>
 
-          <Card>
-            <CardContent className="pt-6">
-              <div className="grid lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2">
+          <div className="grid lg:grid-cols-2 gap-6">
+            {/* Left panel: Chart and AI Strategy */}
+            <div className="space-y-6">
+              <Card>
+                <CardContent className="pt-6">
                   <PriceChart symbol={currentSymbol} />
-                </div>
-                <div className="space-y-6">
-                  <TradeForm symbol={currentSymbol} />
-                  <AIStrategy
-                    symbol={currentSymbol}
-                    currentPrice={priceData[priceData.length - 1]?.price ?? 0}
-                    historicalPrices={priceData.map(d => d.price)}
-                    technicalIndicators={{
-                      sma: priceData[priceData.length - 1]?.sma,
-                      rsi: priceData[priceData.length - 1]?.rsi,
-                      volatility: 2 // Using our mock 2% volatility
-                    }}
-                  />
-                  <RiskDashboard symbol={currentSymbol} />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
+              <AIStrategy
+                symbol={currentSymbol}
+                currentPrice={priceData[priceData.length - 1]?.price ?? 0}
+                historicalPrices={priceData.map(d => d.price)}
+                technicalIndicators={{
+                  sma: priceData[priceData.length - 1]?.sma,
+                  rsi: priceData[priceData.length - 1]?.rsi,
+                  volatility: 2 // Using our mock 2% volatility
+                }}
+              />
+            </div>
+
+            {/* Right panel: Trading Form and Risk Dashboard */}
+            <div className="space-y-6">
+              <TradeForm symbol={currentSymbol} />
+              <RiskDashboard symbol={currentSymbol} />
+            </div>
+          </div>
 
           <TechnicalAnalysis symbol={currentSymbol} data={priceData} />
         </div>
