@@ -99,11 +99,10 @@ export default function TradePage() {
               </Card>
             </div>
 
-            {/* Right panel (1/3): Trading Form, Risk Dashboard, and Price Alerts */}
+            {/* Right panel (1/3): Trading Form and Risk Dashboard */}
             <div className="space-y-6">
               <TradeForm symbol={currentSymbol} />
               <RiskDashboard symbol={currentSymbol} />
-              <PriceAlerts symbol={currentSymbol} />
             </div>
           </div>
 
@@ -118,6 +117,9 @@ export default function TradePage() {
               volatility: 2 // Using our mock 2% volatility
             }}
           />
+
+          {/* Full-width Price Alerts */}
+          <PriceAlerts symbol={currentSymbol} />
 
           {/* Full-width Algorithmic Trading */}
           <AlgorithmicTrading symbol={currentSymbol} />
