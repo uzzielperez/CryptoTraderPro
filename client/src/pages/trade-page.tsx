@@ -3,10 +3,34 @@ import { NavSidebar } from "@/components/nav-sidebar";
 import { PriceChart } from "@/components/price-chart";
 import { TradeForm } from "@/components/trade-form";
 import { RiskDashboard } from "@/components/risk-dashboard";
+import { TechnicalAnalysis } from "@/components/technical-analysis";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useEffect } from "react";
 
 export default function TradePage() {
   const { symbol } = useParams();
+  const [priceData, setPriceData] = useState<Array<{
+    time: string;
+    price: number;
+  }>>([]);
+
+  useEffect(() => {
+    // Generate mock historical data for now
+    const generateMockData = () => {
+      const basePrice = {
+        BTC: 50000,
+        ETH: 3000,
+        DOGE: 0.15,
+      }[symbol ?? "BTC"] ?? 100;
+
+      return Array.from({ length: 100 }, (_, i) => ({
+        time: new Date(Date.now() - (99 - i) * 3600000).toISOString(),
+        price: basePrice * (0.9 + Math.random() * 0.2),
+      }));
+    };
+
+    setPriceData(generateMockData());
+  }, [symbol]);
 
   if (!symbol) return null;
 
@@ -31,6 +55,8 @@ export default function TradePage() {
               </div>
             </CardContent>
           </Card>
+
+          <TechnicalAnalysis symbol={symbol} data={priceData} />
         </div>
       </main>
     </div>
