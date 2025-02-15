@@ -1,8 +1,9 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { WebSocketServer } from "ws";
 import { setupAuth } from "./auth";
-import { insertTradeSchema, insertWatchlistSchema } from "@shared/schema";
+import { storage } from "./storage";
+import { insertTradeSchema, insertWatchlistSchema, insertPriceAlertSchema } from "@shared/schema";
 import { calculateRiskMetrics, executeOrder } from "./coinbase-service";
 import { generateTradingStrategy } from "./ai-strategy-service";
 import { algorithmicTradingService } from "./algorithmic-trading-service";
@@ -43,8 +44,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(201).json(trade);
     } catch (error) {
-      res.status(500).json({ 
-        message: error instanceof Error ? error.message : "Trade execution failed" 
+      res.status(500).json({
+        message: error instanceof Error ? error.message : "Trade execution failed"
       });
     }
   });
@@ -57,8 +58,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const metrics = await calculateRiskMetrics(req.params.symbol);
       res.json(metrics);
     } catch (error) {
-      res.status(500).json({ 
-        message: error instanceof Error ? error.message : "Failed to calculate risk metrics" 
+      res.status(500).json({
+        message: error instanceof Error ? error.message : "Failed to calculate risk metrics"
       });
     }
   });
@@ -114,8 +115,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(strategy);
     } catch (error) {
-      res.status(500).json({ 
-        message: error instanceof Error ? error.message : "Failed to generate trading strategy" 
+      res.status(500).json({
+        message: error instanceof Error ? error.message : "Failed to generate trading strategy"
       });
     }
   });
@@ -128,8 +129,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await algorithmicTradingService.startStrategy(req.user.id, req.body);
       res.sendStatus(200);
     } catch (error) {
-      res.status(500).json({ 
-        message: error instanceof Error ? error.message : "Failed to start trading strategy" 
+      res.status(500).json({
+        message: error instanceof Error ? error.message : "Failed to start trading strategy"
       });
     }
   });
@@ -141,12 +142,79 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await algorithmicTradingService.stopStrategy(req.user.id, req.body.symbol);
       res.sendStatus(200);
     } catch (error) {
-      res.status(500).json({ 
-        message: error instanceof Error ? error.message : "Failed to stop trading strategy" 
+      res.status(500).json({
+        message: error instanceof Error ? error.message : "Failed to stop trading strategy"
       });
     }
   });
 
+  // Price Alert routes
+  app.get("/api/price-alerts", async (req, res) => {
+    if (!req.user) return res.sendStatus(401);
+    const alerts = await storage.getPriceAlerts(req.user.id);
+    res.json(alerts);
+  });
+
+  app.post("/api/price-alerts", async (req, res) => {
+    if (!req.user) return res.sendStatus(401);
+
+    const validation = insertPriceAlertSchema.safeParse(req.body);
+    if (!validation.success) {
+      return res.status(400).json(validation.error);
+    }
+
+    const alert = await storage.createPriceAlert(req.user.id, validation.data);
+    res.status(201).json(alert);
+  });
+
+  app.delete("/api/price-alerts/:id", async (req, res) => {
+    if (!req.user) return res.sendStatus(401);
+
+    const alertId = parseInt(req.params.id);
+    if (isNaN(alertId)) {
+      return res.status(400).json({ message: "Invalid alert ID" });
+    }
+
+    const alert = await storage.getPriceAlert(alertId);
+    if (!alert || alert.userId !== req.user.id) {
+      return res.status(404).json({ message: "Alert not found" });
+    }
+
+    await storage.deactivatePriceAlert(alertId);
+    res.sendStatus(204);
+  });
+
   const httpServer = createServer(app);
+
+  // Setup WebSocket server for real-time price alerts
+  const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+
+  // Keep track of connected clients by user ID
+  const clients = new Map<number, Set<WebSocket>>();
+
+  wss.on("connection", (ws, req) => {
+    if (!req.session?.passport?.user) {
+      ws.close();
+      return;
+    }
+
+    const userId = req.session.passport.user;
+    if (!clients.has(userId)) {
+      clients.set(userId, new Set());
+    }
+    clients.get(userId)?.add(ws);
+
+    ws.on("close", () => {
+      const userClients = clients.get(userId);
+      userClients?.delete(ws);
+      if (userClients?.size === 0) {
+        clients.delete(userId);
+      }
+    });
+  });
+
+  // Expose clients map so price monitoring service can send notifications
+  (global as any).priceAlertClients = clients;
+
   return httpServer;
 }

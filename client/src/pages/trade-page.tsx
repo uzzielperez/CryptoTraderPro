@@ -16,6 +16,7 @@ import { getSupportedSymbols } from "@/lib/price-service";
 import { useState, useEffect } from "react";
 import { AIStrategy } from "@/components/ai-strategy";
 import { AlgorithmicTrading } from "@/components/algorithmic-trading";
+import { PriceAlerts } from "@/components/price-alerts";
 
 export default function TradePage() {
   const { symbol } = useParams();
@@ -98,10 +99,11 @@ export default function TradePage() {
               </Card>
             </div>
 
-            {/* Right panel (1/3): Trading Form and Risk Dashboard */}
+            {/* Right panel (1/3): Trading Form, Risk Dashboard, and Price Alerts */}
             <div className="space-y-6">
               <TradeForm symbol={currentSymbol} />
               <RiskDashboard symbol={currentSymbol} />
+              <PriceAlerts symbol={currentSymbol} />
             </div>
           </div>
 
