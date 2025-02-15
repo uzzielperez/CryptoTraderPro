@@ -59,11 +59,15 @@ export const insertWatchlistSchema = createInsertSchema(watchlist).pick({
   symbol: true,
 });
 
-export const insertPriceAlertSchema = createInsertSchema(priceAlerts).pick({
-  symbol: true,
-  targetPrice: true,
-  type: true,
-});
+export const insertPriceAlertSchema = createInsertSchema(priceAlerts)
+  .pick({
+    symbol: true,
+    targetPrice: true,
+    type: true,
+  })
+  .extend({
+    targetPrice: z.number().positive("Target price must be positive"),
+  });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type InsertTrade = z.infer<typeof insertTradeSchema>;

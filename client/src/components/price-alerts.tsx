@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -17,44 +17,80 @@ import {
 import { Loader2, BellRing, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import * as z from 'zod';
 
-type PriceAlertFormData = {
-  symbol: string;
-  targetPrice: string;
-  type: "above" | "below";
-};
+type PriceAlertFormData = z.infer<typeof insertPriceAlertSchema>;
+
+const WEBSOCKET_RETRY_INTERVAL = 5000;
+const MAX_RETRIES = 5;
 
 export function PriceAlerts({ symbol }: { symbol: string }) {
   const { toast } = useToast();
   const [socket, setSocket] = useState<WebSocket | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
-  useEffect(() => {
+  const connectWebSocket = useCallback(() => {
+    if (retryCount >= MAX_RETRIES) {
+      toast({
+        title: "Connection Error",
+        description: "Failed to connect to price alert service. Please refresh the page.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
     const ws = new WebSocket(wsUrl);
 
-    ws.onmessage = (event) => {
-      const alert = JSON.parse(event.data);
+    ws.onopen = () => {
+      setRetryCount(0);
       toast({
-        title: "Price Alert",
-        description: `${alert.symbol} has reached ${alert.targetPrice}!`,
+        title: "Connected",
+        description: "Price alert service connected successfully.",
       });
     };
 
-    setSocket(ws);
-
-    return () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
+    ws.onmessage = (event) => {
+      try {
+        const alert = JSON.parse(event.data);
+        toast({
+          title: "Price Alert",
+          description: `${alert.symbol} has reached ${alert.targetPrice}!`,
+        });
+      } catch (error) {
+        console.error("Error parsing alert message:", error);
       }
     };
-  }, [toast]);
+
+    ws.onclose = () => {
+      setSocket(null);
+      setRetryCount(prev => prev + 1);
+      setTimeout(connectWebSocket, WEBSOCKET_RETRY_INTERVAL);
+    };
+
+    ws.onerror = (error) => {
+      console.error("WebSocket error:", error);
+      ws.close();
+    };
+
+    setSocket(ws);
+  }, [toast, retryCount]);
+
+  useEffect(() => {
+    connectWebSocket();
+    return () => {
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.close();
+      }
+    };
+  }, [connectWebSocket]);
 
   const form = useForm<PriceAlertFormData>({
     resolver: zodResolver(insertPriceAlertSchema),
     defaultValues: {
       symbol,
-      targetPrice: "",
+      targetPrice: 0,
       type: "above",
     },
   });
@@ -69,15 +105,12 @@ export function PriceAlerts({ symbol }: { symbol: string }) {
 
   const createMutation = useMutation({
     mutationFn: async (data: PriceAlertFormData) => {
-      const response = await apiRequest("POST", "/api/price-alerts", {
-        ...data,
-        targetPrice: parseFloat(data.targetPrice),
-      });
+      const response = await apiRequest("POST", "/api/price-alerts", data);
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/price-alerts"] });
-      form.reset();
+      form.reset({ symbol, targetPrice: 0, type: "above" });
       toast({
         title: "Alert Created",
         description: "You will be notified when the price target is reached.",
@@ -127,7 +160,7 @@ export function PriceAlerts({ symbol }: { symbol: string }) {
                     type="number"
                     step="0.01"
                     placeholder="Target price"
-                    {...form.register("targetPrice")}
+                    {...form.register("targetPrice", { valueAsNumber: true })}
                   />
                   <Select
                     value={form.watch("type")}

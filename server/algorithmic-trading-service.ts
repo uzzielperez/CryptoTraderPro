@@ -4,6 +4,7 @@ import { calculateRiskMetrics } from "./coinbase-service";
 import { executeOrder } from "./coinbase-service";
 import { SMA, RSI, BollingerBands } from "technicalindicators";
 import { log } from "./vite";
+import { sql } from "drizzle-orm";
 
 interface PriceData {
   timestamp: number;
@@ -22,6 +23,7 @@ interface StrategyConfig {
     oversoldThreshold?: number;
     overboughtThreshold?: number;
     deviations?: number;
+    period?: number; // Added for Bollinger Bands
   };
 }
 
@@ -64,10 +66,11 @@ class AlgorithmicTradingService {
     if (!strategy || !strategy.isActive) return;
 
     try {
-      // Get current price and add to history
+      // Get current price from risk metrics
       const metrics = await calculateRiskMetrics(strategy.config.symbol);
-      const currentPrice = metrics.currentPrice;
-      
+      // Extract current price from metrics
+      const currentPrice = Number(metrics.currentPrice || 0);
+
       strategy.priceHistory.push({
         timestamp: Date.now(),
         price: currentPrice
@@ -172,14 +175,17 @@ class AlgorithmicTradingService {
     try {
       await executeOrder(signal, config.symbol, config.amount);
 
-      // Record the trade
-      await db.insert(trades).values({
-        userId,
+      // Record the trade with proper types
+      const tradeValues = {
+        user_id: userId,
         symbol: config.symbol,
-        amount: config.amount,
-        price: currentPrice,
+        amount: config.amount.toString(),
+        price: currentPrice.toString(),
         type: signal,
-      });
+      };
+
+      // Insert the trade record
+      await db.insert(trades).values(tradeValues);
 
       // Update portfolio
       const multiplier = signal === 'buy' ? 1 : -1;
@@ -203,7 +209,7 @@ class AlgorithmicTradingService {
           }
         } else if (signal === 'buy') {
           await tx.insert(portfolio).values({
-            userId,
+            user_id: userId,
             symbol: config.symbol,
             amount: config.amount.toString(),
           });

@@ -1,6 +1,6 @@
-import type { Express } from "express";
+import type { Express, Request } from "express";
 import { createServer, type Server } from "http";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, type WebSocket } from "ws";
 import { setupAuth } from "./auth";
 import { storage } from "./storage";
 import { insertTradeSchema, insertWatchlistSchema, insertPriceAlertSchema } from "@shared/schema";
@@ -8,18 +8,23 @@ import { calculateRiskMetrics, executeOrder } from "./coinbase-service";
 import { generateTradingStrategy } from "./ai-strategy-service";
 import { algorithmicTradingService } from "./algorithmic-trading-service";
 import type { IncomingMessage } from "http";
-import type { WebSocket as WS } from "ws";
 
-interface WebSocketWithSession extends WS {
+interface WebSocketWithSession extends WebSocket {
   isAlive: boolean;
+  userId?: number;
 }
 
-interface SessionIncomingMessage extends IncomingMessage {
-  session?: Express.Session & {
+// Extend Session type to include passport
+declare module 'express-session' {
+  interface Session {
     passport?: {
       user?: number;
     };
-  };
+  }
+}
+
+interface SessionIncomingMessage extends IncomingMessage {
+  session?: Express.Session;
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -201,31 +206,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
   // Setup WebSocket server for real-time price alerts
-  const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+  const wss = new WebSocketServer({ 
+    server: httpServer, 
+    path: "/ws",
+    verifyClient: (info, callback) => {
+      const req = info.req as SessionIncomingMessage;
+      if (!req.session?.passport?.user) {
+        callback(false, 401, 'Unauthorized');
+        return;
+      }
+      callback(true);
+    }
+  });
 
   // Keep track of connected clients by user ID
   const clients = new Map<number, Set<WebSocketWithSession>>();
 
-  wss.on("connection", (ws: WebSocketWithSession, req: SessionIncomingMessage) => {
-    if (!req.session?.passport?.user) {
+  wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
+    const sessionReq = req as SessionIncomingMessage;
+    const userId = sessionReq.session?.passport?.user;
+
+    if (!userId) {
       ws.close();
       return;
     }
 
-    const userId = req.session.passport.user;
+    const wsWithSession = ws as WebSocketWithSession;
+    wsWithSession.isAlive = true;
+    wsWithSession.userId = userId;
+
     if (!clients.has(userId)) {
       clients.set(userId, new Set());
     }
-    clients.get(userId)?.add(ws);
+    clients.get(userId)?.add(wsWithSession);
 
-    ws.isAlive = true;
-    ws.on("pong", () => {
-      ws.isAlive = true;
+    wsWithSession.on("pong", () => {
+      wsWithSession.isAlive = true;
     });
 
-    ws.on("close", () => {
+    wsWithSession.on("close", () => {
       const userClients = clients.get(userId);
-      userClients?.delete(ws);
+      userClients?.delete(wsWithSession);
       if (userClients?.size === 0) {
         clients.delete(userId);
       }
@@ -234,12 +255,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Add WebSocket heartbeat to detect stale connections
   const interval = setInterval(() => {
-    wss.clients.forEach((ws: WebSocketWithSession) => {
-      if (!ws.isAlive) {
-        return ws.terminate();
+    wss.clients.forEach((ws: WebSocket) => {
+      const wsWithSession = ws as WebSocketWithSession;
+      if (!wsWithSession.isAlive) {
+        return wsWithSession.terminate();
       }
-      ws.isAlive = false;
-      ws.ping();
+      wsWithSession.isAlive = false;
+      wsWithSession.ping();
     });
   }, 30000);
 

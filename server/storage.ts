@@ -5,6 +5,7 @@ import { db } from "./db";
 import { eq, and } from "drizzle-orm";
 import { users, trades, portfolio, watchlist, priceAlerts } from "@shared/schema";
 import { pool } from "./db";
+import { sql } from "drizzle-orm";
 
 const PostgresSessionStore = connectPg(session);
 
@@ -136,7 +137,13 @@ export class DatabaseStorage implements IStorage {
   async createPriceAlert(userId: number, alert: InsertPriceAlert): Promise<PriceAlert> {
     const [newAlert] = await db
       .insert(priceAlerts)
-      .values({ ...alert, userId })
+      .values({
+        symbol: alert.symbol,
+        targetPrice: alert.targetPrice.toString(),
+        type: alert.type,
+        userId: userId,
+        isActive: true
+      })
       .returning();
     return newAlert;
   }
