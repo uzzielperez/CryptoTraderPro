@@ -88,23 +88,13 @@ export default function TradePage() {
           </div>
 
           <div className="grid grid-cols-3 gap-6">
-            {/* Left and middle panel (2/3): Chart and AI Strategy */}
-            <div className="col-span-2 space-y-6">
+            {/* Left and middle panel (2/3): Chart */}
+            <div className="col-span-2">
               <Card>
                 <CardContent className="pt-6">
                   <PriceChart symbol={currentSymbol} />
                 </CardContent>
               </Card>
-              <AIStrategy
-                symbol={currentSymbol}
-                currentPrice={priceData[priceData.length - 1]?.price ?? 0}
-                historicalPrices={priceData.map(d => d.price)}
-                technicalIndicators={{
-                  sma: priceData[priceData.length - 1]?.sma,
-                  rsi: priceData[priceData.length - 1]?.rsi,
-                  volatility: 2 // Using our mock 2% volatility
-                }}
-              />
             </div>
 
             {/* Right panel (1/3): Trading Form and Risk Dashboard */}
@@ -113,6 +103,18 @@ export default function TradePage() {
               <RiskDashboard symbol={currentSymbol} />
             </div>
           </div>
+
+          {/* Full-width AI Strategy */}
+          <AIStrategy
+            symbol={currentSymbol}
+            currentPrice={priceData[priceData.length - 1]?.price ?? 0}
+            historicalPrices={priceData.map(d => d.price)}
+            technicalIndicators={{
+              sma: priceData[priceData.length - 1]?.price,
+              rsi: 50, // Using a default value since we don't have real RSI data
+              volatility: 2 // Using our mock 2% volatility
+            }}
+          />
 
           <TechnicalAnalysis symbol={currentSymbol} data={priceData} />
         </div>
