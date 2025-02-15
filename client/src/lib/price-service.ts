@@ -15,6 +15,11 @@ const symbolToId: { [key: string]: string } = {
   DOGE: "dogecoin",
   SOL: "solana",
   DOT: "polkadot",
+  ADA: "cardano",
+  MATIC: "matic-network",
+  LINK: "chainlink",
+  UNI: "uniswap",
+  AVAX: "avalanche-2"
 };
 
 export async function getPrice(symbol: string): Promise<number> {
