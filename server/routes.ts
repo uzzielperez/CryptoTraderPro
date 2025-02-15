@@ -8,27 +8,34 @@ import { calculateRiskMetrics, executeOrder } from "./coinbase-service";
 import { generateTradingStrategy } from "./ai-strategy-service";
 import { algorithmicTradingService } from "./algorithmic-trading-service";
 import type { IncomingMessage } from "http";
+import type { Session } from 'express-session';
 
 interface WebSocketWithSession extends WebSocket {
   isAlive: boolean;
   userId?: number;
 }
 
-// Extend Session type to include passport
-declare module 'express-session' {
-  interface Session {
-    passport?: {
-      user?: number;
-    };
-  }
+// Extend Session type properly
+interface CustomSession extends Session {
+  passport?: {
+    user?: number;
+  };
 }
 
 interface SessionIncomingMessage extends IncomingMessage {
-  session?: Express.Session;
+  session?: CustomSession;
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Setup authentication first
   setupAuth(app);
+
+  // Setup routes after auth is configured
+  app.get("/api/user", (req, res) => {
+    console.log("Auth status:", req.isAuthenticated(), "User:", req.user);
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    res.json(req.user);
+  });
 
   // Trading routes
   app.get("/api/trades", async (req, res) => {
@@ -309,16 +316,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const httpServer = createServer(app);
 
-  // Setup WebSocket server for real-time price alerts
-  const wss = new WebSocketServer({ 
-    server: httpServer, 
+  // Setup WebSocket server for real-time price alerts with improved error handling
+  const wss = new WebSocketServer({
+    server: httpServer,
     path: "/ws",
     verifyClient: (info, callback) => {
       const req = info.req as SessionIncomingMessage;
+      console.log("WebSocket auth check - Session:", !!req.session, "User:", req.session?.passport?.user);
+
       if (!req.session?.passport?.user) {
+        console.log("WebSocket connection rejected - No authenticated user");
         callback(false, 401, 'Unauthorized');
         return;
       }
+      console.log("WebSocket connection accepted for user:", req.session.passport.user);
       callback(true);
     }
   });
