@@ -1,6 +1,7 @@
 import { NavSidebar } from "@/components/nav-sidebar";
 import { PortfolioSummary } from "@/components/portfolio-summary";
 import { Watchlist } from "@/components/watchlist";
+import { PerformanceHeatmap } from "@/components/performance-heatmap";
 import { useAuth } from "@/hooks/use-auth";
 
 export default function HomePage() {
@@ -18,6 +19,8 @@ export default function HomePage() {
             <PortfolioSummary />
             <Watchlist />
           </div>
+          {/* Add Performance Heatmap below the portfolio and watchlist */}
+          <PerformanceHeatmap />
         </div>
       </main>
     </div>
