@@ -15,7 +15,7 @@ export default function TradePage() {
   }>>([]);
 
   useEffect(() => {
-    // Generate mock historical data for now
+    // Generate mock historical data with more realistic price movements
     const generateMockData = () => {
       const basePrice = {
         BTC: 50000,
@@ -23,10 +23,20 @@ export default function TradePage() {
         DOGE: 0.15,
       }[symbol ?? "BTC"] ?? 100;
 
-      return Array.from({ length: 100 }, (_, i) => ({
-        time: new Date(Date.now() - (99 - i) * 3600000).toISOString(),
-        price: basePrice * (0.9 + Math.random() * 0.2),
-      }));
+      let lastPrice = basePrice;
+      const volatility = basePrice * 0.02; // 2% volatility
+
+      return Array.from({ length: 100 }, (_, i) => {
+        // Random walk with mean reversion
+        const change = (Math.random() - 0.5) * volatility;
+        const meanReversion = (basePrice - lastPrice) * 0.1;
+        lastPrice = lastPrice + change + meanReversion;
+
+        return {
+          time: new Date(Date.now() - (99 - i) * 3600000).toISOString(),
+          price: lastPrice
+        };
+      });
     };
 
     setPriceData(generateMockData());

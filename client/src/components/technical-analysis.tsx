@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType } from 'lightweight-charts';
+import { 
+  createChart,
+  IChartApi,
+  ColorType,
+  CandlestickSeriesOptions,
+  SeriesOptionsCommon
+} from 'lightweight-charts';
 import { SMA, RSI, MACD, BollingerBands } from 'technicalindicators';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
@@ -15,6 +21,7 @@ interface TechnicalAnalysisProps {
 
 export function TechnicalAnalysis({ symbol, data }: TechnicalAnalysisProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  const [chartInstance, setChartInstance] = useState<IChartApi | null>(null);
   const [indicators, setIndicators] = useState({
     sma: false,
     rsi: false,
@@ -26,26 +33,38 @@ export function TechnicalAnalysis({ symbol, data }: TechnicalAnalysisProps) {
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    const chartOptions = {
+    const chart = createChart(chartContainerRef.current, {
       layout: {
         textColor: 'black',
         background: { type: ColorType.Solid, color: 'white' }
       },
       width: chartContainerRef.current.clientWidth,
-      height: 400
-    };
-
-    const chart = createChart(chartContainerRef.current, chartOptions);
-    const lineSeries = chart.addLineSeries({
-      color: 'rgb(2, 192, 118)',
-      lineWidth: 2,
+      height: 400,
+      grid: {
+        vertLines: { color: '#E6E6E6' },
+        horzLines: { color: '#E6E6E6' }
+      }
     });
 
-    // Convert timestamps to Unix timestamps (seconds)
-    lineSeries.setData(data.map(item => ({
+    const candlestickSeries = chart.addCandlestickSeries({
+      upColor: '#26a69a',
+      downColor: '#ef5350',
+      borderVisible: false,
+      wickUpColor: '#26a69a',
+      wickDownColor: '#ef5350'
+    });
+
+    // Convert price data to OHLC format
+    const candleData = data.map(item => ({
       time: Math.floor(new Date(item.time).getTime() / 1000),
-      value: item.price
-    })));
+      open: item.price,
+      high: item.price * 1.002, // Simulate high price
+      low: item.price * 0.998,  // Simulate low price
+      close: item.price
+    }));
+
+    candlestickSeries.setData(candleData);
+    setChartInstance(chart);
 
     // Add SMA indicator if enabled
     if (indicators.sma) {
@@ -54,12 +73,13 @@ export function TechnicalAnalysis({ symbol, data }: TechnicalAnalysisProps) {
         values: data.map(d => d.price)
       });
 
-      const smaSeries = chart.addLineSeries({
-        color: 'rgba(4, 111, 232, 1)',
-        lineWidth: 1,
+      const smaLineSeries = chart.addBaselineSeries({
+        baseValue: { type: 'price', price: 0 },
+        lineWidth: 2,
+        color: 'rgba(4, 111, 232, 1)'
       });
 
-      smaSeries.setData(
+      smaLineSeries.setData(
         smaData.map((value, index) => ({
           time: Math.floor(new Date(data[index + 13].time).getTime() / 1000),
           value: value
