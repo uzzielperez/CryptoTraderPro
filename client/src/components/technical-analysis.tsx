@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType, LineStyle } from 'lightweight-charts';
+import { createChart, ColorType } from 'lightweight-charts';
 import { SMA, RSI, MACD, BollingerBands } from 'technicalindicators';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
@@ -36,17 +36,38 @@ export function TechnicalAnalysis({ symbol, data }: TechnicalAnalysisProps) {
     };
 
     const chart = createChart(chartContainerRef.current, chartOptions);
-    const series = chart.addAreaSeries({
-      lineColor: 'rgb(2, 192, 118)',
-      topColor: 'rgba(2, 192, 118, 0.4)',
-      bottomColor: 'rgba(2, 192, 118, 0)',
+    const lineSeries = chart.addLineSeries({
+      color: 'rgb(2, 192, 118)',
+      lineWidth: 2,
     });
 
-    series.setData(data.map(item => ({
-      time: new Date(item.time).getTime() / 1000,
+    // Convert timestamps to Unix timestamps (seconds)
+    lineSeries.setData(data.map(item => ({
+      time: Math.floor(new Date(item.time).getTime() / 1000),
       value: item.price
     })));
 
+    // Add SMA indicator if enabled
+    if (indicators.sma) {
+      const smaData = SMA.calculate({
+        period: 14,
+        values: data.map(d => d.price)
+      });
+
+      const smaSeries = chart.addLineSeries({
+        color: 'rgba(4, 111, 232, 1)',
+        lineWidth: 1,
+      });
+
+      smaSeries.setData(
+        smaData.map((value, index) => ({
+          time: Math.floor(new Date(data[index + 13].time).getTime() / 1000),
+          value: value
+        }))
+      );
+    }
+
+    // Handle window resize
     const handleResize = () => {
       if (chartContainerRef.current) {
         chart.applyOptions({
@@ -61,7 +82,7 @@ export function TechnicalAnalysis({ symbol, data }: TechnicalAnalysisProps) {
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [data]);
+  }, [data, indicators.sma]); // Re-create chart when data or SMA indicator changes
 
   return (
     <Card>
