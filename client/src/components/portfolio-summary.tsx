@@ -20,6 +20,9 @@ export function PortfolioSummary() {
 
   if (!portfolio) return null;
 
+  // Convert balance from string to number for display
+  const balance = user?.balance ? parseFloat(user.balance.toString()) : 0;
+
   return (
     <Card>
       <CardHeader>
@@ -27,7 +30,7 @@ export function PortfolioSummary() {
       </CardHeader>
       <CardContent>
         <div className="mb-4">
-          <div className="text-2xl font-bold">${user?.balance.toFixed(2)}</div>
+          <div className="text-2xl font-bold">${balance.toFixed(2)}</div>
           <div className="text-sm text-muted-foreground">Available Balance</div>
         </div>
 
@@ -40,22 +43,28 @@ export function PortfolioSummary() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {portfolio.map((position) => (
-              <TableRow key={position.id}>
-                <TableCell>
-                  <Link 
-                    href={`/trade/${position.symbol}`}
-                    className="text-primary hover:underline"
-                  >
-                    {position.symbol}
-                  </Link>
-                </TableCell>
-                <TableCell>{position.amount}</TableCell>
-                <TableCell>
-                  ${(position.amount * getMockPrice(position.symbol)).toFixed(2)}
-                </TableCell>
-              </TableRow>
-            ))}
+            {portfolio.map((position) => {
+              // Convert amount from string to number for calculations
+              const amount = parseFloat(position.amount.toString());
+              const value = amount * getMockPrice(position.symbol);
+
+              return (
+                <TableRow key={position.id}>
+                  <TableCell>
+                    <Link 
+                      href={`/trade/${position.symbol}`}
+                      className="text-primary hover:underline"
+                    >
+                      {position.symbol}
+                    </Link>
+                  </TableCell>
+                  <TableCell>{amount.toFixed(8)}</TableCell>
+                  <TableCell>
+                    ${value.toFixed(2)}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </CardContent>
@@ -70,6 +79,6 @@ function getMockPrice(symbol: string): number {
     ETH: 3000,
     DOGE: 0.15,
   }[symbol] ?? 100;
-  
+
   return basePrice * (0.9 + Math.random() * 0.2);
 }
