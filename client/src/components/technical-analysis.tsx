@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { createChart, IChartApi, LineStyle } from 'lightweight-charts';
+import { createChart, ColorType, LineStyle } from 'lightweight-charts';
 import { SMA, RSI, MACD, BollingerBands } from 'technicalindicators';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 
@@ -16,7 +15,6 @@ interface TechnicalAnalysisProps {
 
 export function TechnicalAnalysis({ symbol, data }: TechnicalAnalysisProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const [chart, setChart] = useState<IChartApi | null>(null);
   const [indicators, setIndicators] = useState({
     sma: false,
     rsi: false,
@@ -26,88 +24,44 @@ export function TechnicalAnalysis({ symbol, data }: TechnicalAnalysisProps) {
 
   // Initialize chart
   useEffect(() => {
-    if (chartContainerRef.current) {
-      const newChart = createChart(chartContainerRef.current, {
-        width: chartContainerRef.current.clientWidth,
-        height: 400,
-        layout: {
-          background: { color: 'transparent' },
-          textColor: 'rgba(255, 255, 255, 0.9)',
-        },
-        grid: {
-          vertLines: { color: 'rgba(197, 203, 206, 0.1)' },
-          horzLines: { color: 'rgba(197, 203, 206, 0.1)' },
-        },
-      });
+    if (!chartContainerRef.current) return;
 
-      const mainSeries = newChart.addCandlestickSeries();
-      mainSeries.setData(data.map(d => ({
-        time: d.time,
-        open: d.price,
-        high: d.price * 1.001,
-        low: d.price * 0.999,
-        close: d.price
-      })));
+    const chartOptions = {
+      layout: {
+        textColor: 'black',
+        background: { type: ColorType.Solid, color: 'white' }
+      },
+      width: chartContainerRef.current.clientWidth,
+      height: 400
+    };
 
-      setChart(newChart);
-
-      return () => {
-        newChart.remove();
-      };
-    }
-  }, [data]);
-
-  // Handle indicator toggles
-  const toggleIndicator = (name: keyof typeof indicators) => {
-    if (!chart) return;
-
-    setIndicators(prev => {
-      const newState = { ...prev, [name]: !prev[name] };
-      
-      // Calculate and display indicators
-      if (newState[name]) {
-        switch (name) {
-          case 'sma':
-            const smaData = SMA.calculate({
-              period: 14,
-              values: data.map(d => d.price)
-            });
-            const smaLine = chart.addLineSeries({
-              color: 'rgba(4, 111, 232, 1)',
-              lineWidth: 2,
-            });
-            smaLine.setData(
-              smaData.map((value, index) => ({
-                time: data[index + 13].time,
-                value
-              }))
-            );
-            break;
-
-          case 'rsi':
-            const rsiData = RSI.calculate({
-              period: 14,
-              values: data.map(d => d.price)
-            });
-            const rsiLine = chart.addLineSeries({
-              color: 'rgba(255, 99, 132, 1)',
-              lineWidth: 2,
-            });
-            rsiLine.setData(
-              rsiData.map((value, index) => ({
-                time: data[index + 13].time,
-                value
-              }))
-            );
-            break;
-
-          // Add other indicators similarly
-        }
-      }
-
-      return newState;
+    const chart = createChart(chartContainerRef.current, chartOptions);
+    const series = chart.addAreaSeries({
+      lineColor: 'rgb(2, 192, 118)',
+      topColor: 'rgba(2, 192, 118, 0.4)',
+      bottomColor: 'rgba(2, 192, 118, 0)',
     });
-  };
+
+    series.setData(data.map(item => ({
+      time: new Date(item.time).getTime() / 1000,
+      value: item.price
+    })));
+
+    const handleResize = () => {
+      if (chartContainerRef.current) {
+        chart.applyOptions({
+          width: chartContainerRef.current.clientWidth
+        });
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      chart.remove();
+    };
+  }, [data]);
 
   return (
     <Card>
@@ -119,36 +73,36 @@ export function TechnicalAnalysis({ symbol, data }: TechnicalAnalysisProps) {
           <div className="flex items-center space-x-2">
             <Switch
               checked={indicators.sma}
-              onCheckedChange={() => toggleIndicator('sma')}
+              onCheckedChange={(checked) => setIndicators(prev => ({ ...prev, sma: checked }))}
             />
             <Label>SMA</Label>
           </div>
-          
+
           <div className="flex items-center space-x-2">
             <Switch
               checked={indicators.rsi}
-              onCheckedChange={() => toggleIndicator('rsi')}
+              onCheckedChange={(checked) => setIndicators(prev => ({ ...prev, rsi: checked }))}
             />
             <Label>RSI</Label>
           </div>
-          
+
           <div className="flex items-center space-x-2">
             <Switch
               checked={indicators.macd}
-              onCheckedChange={() => toggleIndicator('macd')}
+              onCheckedChange={(checked) => setIndicators(prev => ({ ...prev, macd: checked }))}
             />
             <Label>MACD</Label>
           </div>
-          
+
           <div className="flex items-center space-x-2">
             <Switch
               checked={indicators.bollinger}
-              onCheckedChange={() => toggleIndicator('bollinger')}
+              onCheckedChange={(checked) => setIndicators(prev => ({ ...prev, bollinger: checked }))}
             />
             <Label>Bollinger Bands</Label>
           </div>
         </div>
-        
+
         <div ref={chartContainerRef} className="w-full h-[400px]" />
       </CardContent>
     </Card>
