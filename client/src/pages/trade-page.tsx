@@ -15,6 +15,7 @@ import {
 import { getSupportedSymbols } from "@/lib/price-service";
 import { useState, useEffect } from "react";
 import { AIStrategy } from "@/components/ai-strategy";
+import { AlgorithmicTrading } from "@/components/algorithmic-trading";
 
 export default function TradePage() {
   const { symbol } = useParams();
@@ -115,6 +116,9 @@ export default function TradePage() {
               volatility: 2 // Using our mock 2% volatility
             }}
           />
+
+          {/* Full-width Algorithmic Trading */}
+          <AlgorithmicTrading symbol={currentSymbol} />
 
           <TechnicalAnalysis symbol={currentSymbol} data={priceData} />
         </div>

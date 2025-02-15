@@ -5,6 +5,7 @@ import { setupAuth } from "./auth";
 import { insertTradeSchema, insertWatchlistSchema } from "@shared/schema";
 import { calculateRiskMetrics, executeOrder } from "./coinbase-service";
 import { generateTradingStrategy } from "./ai-strategy-service";
+import { algorithmicTradingService } from "./algorithmic-trading-service";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   setupAuth(app);
@@ -115,6 +116,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       res.status(500).json({ 
         message: error instanceof Error ? error.message : "Failed to generate trading strategy" 
+      });
+    }
+  });
+
+  // Algorithmic trading routes
+  app.post("/api/algorithmic-trading/start", async (req, res) => {
+    if (!req.user) return res.sendStatus(401);
+
+    try {
+      await algorithmicTradingService.startStrategy(req.user.id, req.body);
+      res.sendStatus(200);
+    } catch (error) {
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to start trading strategy" 
+      });
+    }
+  });
+
+  app.post("/api/algorithmic-trading/stop", async (req, res) => {
+    if (!req.user) return res.sendStatus(401);
+
+    try {
+      await algorithmicTradingService.stopStrategy(req.user.id, req.body.symbol);
+      res.sendStatus(200);
+    } catch (error) {
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Failed to stop trading strategy" 
       });
     }
   });
