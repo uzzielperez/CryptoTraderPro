@@ -43,6 +43,21 @@ export const priceAlerts = pgTable("price_alerts", {
   triggeredAt: timestamp("triggered_at"),
 });
 
+export const collateralLoans = pgTable("collateral_loans", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  collateralSymbol: text("collateral_symbol").notNull(),
+  collateralAmount: decimal("collateral_amount", { precision: 10, scale: 8 }).notNull(),
+  borrowedSymbol: text("borrowed_symbol").notNull(),
+  borrowedAmount: decimal("borrowed_amount", { precision: 10, scale: 8 }).notNull(),
+  interestRate: decimal("interest_rate", { precision: 5, scale: 2 }).notNull(),
+  startDate: timestamp("start_date").notNull().defaultNow(),
+  dueDate: timestamp("due_date").notNull(),
+  status: text("status", { enum: ["active", "repaid", "liquidated"] }).notNull().default("active"),
+  liquidationPrice: decimal("liquidation_price", { precision: 10, scale: 2 }).notNull(),
+  lastInterestPayment: timestamp("last_interest_payment").notNull().defaultNow(),
+});
+
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
   password: true,
@@ -69,12 +84,28 @@ export const insertPriceAlertSchema = createInsertSchema(priceAlerts)
     targetPrice: z.number().positive("Target price must be positive"),
   });
 
+export const insertCollateralLoanSchema = createInsertSchema(collateralLoans)
+  .pick({
+    collateralSymbol: true,
+    collateralAmount: true,
+    borrowedSymbol: true,
+    borrowedAmount: true,
+    dueDate: true,
+  })
+  .extend({
+    collateralAmount: z.number().positive("Collateral amount must be positive"),
+    borrowedAmount: z.number().positive("Borrowed amount must be positive"),
+    dueDate: z.date().min(new Date(), "Due date must be in the future"),
+  });
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type InsertTrade = z.infer<typeof insertTradeSchema>;
 export type InsertWatchlist = z.infer<typeof insertWatchlistSchema>;
+export type InsertCollateralLoan = z.infer<typeof insertCollateralLoanSchema>;
 export type User = typeof users.$inferSelect;
 export type Trade = typeof trades.$inferSelect;
 export type Portfolio = typeof portfolio.$inferSelect;
 export type Watchlist = typeof watchlist.$inferSelect;
 export type InsertPriceAlert = z.infer<typeof insertPriceAlertSchema>;
 export type PriceAlert = typeof priceAlerts.$inferSelect;
+export type CollateralLoan = typeof collateralLoans.$inferSelect;

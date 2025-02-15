@@ -17,6 +17,7 @@ import { useState, useEffect } from "react";
 import { AIStrategy } from "@/components/ai-strategy";
 import { AlgorithmicTrading } from "@/components/algorithmic-trading";
 import { PriceAlerts } from "@/components/price-alerts";
+import { CollateralLending } from "@/components/collateral-lending";
 
 export default function TradePage() {
   const { symbol } = useParams();
@@ -113,10 +114,13 @@ export default function TradePage() {
             historicalPrices={priceData.map(d => d.price)}
             technicalIndicators={{
               sma: priceData[priceData.length - 1]?.price,
-              rsi: 50, // Using a default value since we don't have real RSI data
-              volatility: 2 // Using our mock 2% volatility
+              rsi: 50,
+              volatility: 2
             }}
           />
+
+          {/* Full-width Collateral Lending */}
+          <CollateralLending availableSymbols={supportedSymbols} />
 
           {/* Full-width Price Alerts */}
           <PriceAlerts symbol={currentSymbol} />

@@ -1,9 +1,9 @@
-import { InsertUser, User, Trade, Portfolio, Watchlist, InsertTrade, InsertWatchlist, InsertPriceAlert, PriceAlert } from "@shared/schema";
+import { InsertUser, User, Trade, Portfolio, Watchlist, InsertTrade, InsertWatchlist, InsertPriceAlert, PriceAlert, CollateralLoan, InsertCollateralLoan } from "@shared/schema";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
-import { users, trades, portfolio, watchlist, priceAlerts } from "@shared/schema";
+import { eq, and, lt, gte } from "drizzle-orm";
+import { users, trades, portfolio, watchlist, priceAlerts, collateralLoans } from "@shared/schema";
 import { pool } from "./db";
 import { sql } from "drizzle-orm";
 
@@ -33,6 +33,13 @@ export interface IStorage {
   getPriceAlert(id: number): Promise<PriceAlert | undefined>;
   createPriceAlert(userId: number, alert: InsertPriceAlert): Promise<PriceAlert>;
   deactivatePriceAlert(id: number): Promise<void>;
+
+  // Lending
+  getCollateralLoans(userId: number): Promise<CollateralLoan[]>;
+  getActiveCollateralLoans(): Promise<CollateralLoan[]>;
+  createCollateralLoan(userId: number, loan: InsertCollateralLoan): Promise<CollateralLoan>;
+  repayCollateralLoan(loanId: number): Promise<void>;
+  liquidateCollateralLoan(loanId: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -153,6 +160,59 @@ export class DatabaseStorage implements IStorage {
       .update(priceAlerts)
       .set({ isActive: false, triggeredAt: new Date() })
       .where(eq(priceAlerts.id, id));
+  }
+
+  async getCollateralLoans(userId: number): Promise<CollateralLoan[]> {
+    return db
+      .select()
+      .from(collateralLoans)
+      .where(eq(collateralLoans.userId, userId));
+  }
+
+  async getActiveCollateralLoans(): Promise<CollateralLoan[]> {
+    return db
+      .select()
+      .from(collateralLoans)
+      .where(eq(collateralLoans.status, "active"));
+  }
+
+  async createCollateralLoan(
+    userId: number,
+    loan: InsertCollateralLoan
+  ): Promise<CollateralLoan> {
+    const liquidationMultiplier = 1.5; // Liquidation at 150% of borrowed value
+    const annualInterestRate = 0.1; // 10% annual interest rate
+
+    const [newLoan] = await db
+      .insert(collateralLoans)
+      .values({
+        userId,
+        collateralSymbol: loan.collateralSymbol,
+        collateralAmount: loan.collateralAmount.toString(),
+        borrowedSymbol: loan.borrowedSymbol,
+        borrowedAmount: loan.borrowedAmount.toString(),
+        interestRate: annualInterestRate.toString(),
+        dueDate: loan.dueDate,
+        liquidationPrice: (loan.borrowedAmount * liquidationMultiplier).toString(),
+        status: "active",
+      })
+      .returning();
+
+    return newLoan;
+  }
+
+  async repayCollateralLoan(loanId: number): Promise<void> {
+    await db
+      .update(collateralLoans)
+      .set({ status: "repaid" })
+      .where(eq(collateralLoans.id, loanId));
+  }
+
+  async liquidateCollateralLoan(loanId: number): Promise<void> {
+    await db
+      .update(collateralLoans)
+      .set({ status: "liquidated" })
+      .where(eq(collateralLoans.id, loanId));
   }
 }
 

@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, type WebSocket } from "ws";
 import { setupAuth } from "./auth";
 import { storage } from "./storage";
-import { insertTradeSchema, insertWatchlistSchema, insertPriceAlertSchema } from "@shared/schema";
+import { insertTradeSchema, insertWatchlistSchema, insertPriceAlertSchema, insertCollateralLoanSchema } from "@shared/schema";
 import { calculateRiskMetrics, executeOrder } from "./coinbase-service";
 import { generateTradingStrategy } from "./ai-strategy-service";
 import { algorithmicTradingService } from "./algorithmic-trading-service";
@@ -201,6 +201,110 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     await storage.deactivatePriceAlert(alertId);
     res.sendStatus(204);
+  });
+
+  // Collateral Lending routes
+  app.get("/api/loans", async (req, res) => {
+    if (!req.user) return res.sendStatus(401);
+    const loans = await storage.getCollateralLoans(req.user.id);
+    res.json(loans);
+  });
+
+  app.post("/api/loans", async (req, res) => {
+    if (!req.user) return res.sendStatus(401);
+
+    const validation = insertCollateralLoanSchema.safeParse(req.body);
+    if (!validation.success) {
+      return res.status(400).json(validation.error);
+    }
+
+    try {
+      // Verify user has enough collateral
+      const portfolio = await storage.getPortfolio(req.user.id);
+      const collateralAsset = portfolio.find(
+        (p) => p.symbol === validation.data.collateralSymbol
+      );
+
+      if (!collateralAsset || Number(collateralAsset.amount) < validation.data.collateralAmount) {
+        return res.status(400).json({
+          message: "Insufficient collateral balance",
+        });
+      }
+
+      // Create the loan
+      const loan = await storage.createCollateralLoan(req.user.id, validation.data);
+
+      // Lock the collateral
+      await storage.updatePortfolio(
+        req.user.id,
+        validation.data.collateralSymbol,
+        -validation.data.collateralAmount
+      );
+
+      // Add borrowed amount to portfolio
+      await storage.updatePortfolio(
+        req.user.id,
+        validation.data.borrowedSymbol,
+        validation.data.borrowedAmount
+      );
+
+      res.status(201).json(loan);
+    } catch (error) {
+      res.status(500).json({
+        message: error instanceof Error ? error.message : "Failed to create loan"
+      });
+    }
+  });
+
+  app.post("/api/loans/:id/repay", async (req, res) => {
+    if (!req.user) return res.sendStatus(401);
+
+    const loanId = parseInt(req.params.id);
+    if (isNaN(loanId)) {
+      return res.status(400).json({ message: "Invalid loan ID" });
+    }
+
+    try {
+      const loans = await storage.getCollateralLoans(req.user.id);
+      const loan = loans.find((l) => l.id === loanId && l.status === "active");
+
+      if (!loan) {
+        return res.status(404).json({ message: "Active loan not found" });
+      }
+
+      // Verify user has enough borrowed asset to repay
+      const portfolio = await storage.getPortfolio(req.user.id);
+      const borrowedAsset = portfolio.find((p) => p.symbol === loan.borrowedSymbol);
+
+      if (!borrowedAsset || Number(borrowedAsset.amount) < Number(loan.borrowedAmount)) {
+        return res.status(400).json({
+          message: "Insufficient balance to repay loan",
+        });
+      }
+
+      // Repay the loan
+      await storage.repayCollateralLoan(loanId);
+
+      // Return collateral to user
+      await storage.updatePortfolio(
+        req.user.id,
+        loan.collateralSymbol,
+        Number(loan.collateralAmount)
+      );
+
+      // Remove borrowed amount from portfolio
+      await storage.updatePortfolio(
+        req.user.id,
+        loan.borrowedSymbol,
+        -Number(loan.borrowedAmount)
+      );
+
+      res.sendStatus(200);
+    } catch (error) {
+      res.status(500).json({
+        message: error instanceof Error ? error.message : "Failed to repay loan"
+      });
+    }
   });
 
   const httpServer = createServer(app);
