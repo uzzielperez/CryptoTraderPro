@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
-import { 
-  createChart,
-  IChartApi,
-  ColorType,
-  CandlestickSeriesOptions,
-  SeriesOptionsCommon
-} from 'lightweight-charts';
-import { SMA, RSI, MACD, BollingerBands } from 'technicalindicators';
+import { useState } from 'react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts';
+import { SMA, RSI } from 'technicalindicators';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -20,8 +22,6 @@ interface TechnicalAnalysisProps {
 }
 
 export function TechnicalAnalysis({ symbol, data }: TechnicalAnalysisProps) {
-  const chartContainerRef = useRef<HTMLDivElement>(null);
-  const [chartInstance, setChartInstance] = useState<IChartApi | null>(null);
   const [indicators, setIndicators] = useState({
     sma: false,
     rsi: false,
@@ -29,80 +29,39 @@ export function TechnicalAnalysis({ symbol, data }: TechnicalAnalysisProps) {
     bollinger: false
   });
 
-  // Initialize chart
-  useEffect(() => {
-    if (!chartContainerRef.current) return;
+  // Calculate indicators
+  const chartData = data.map(item => ({
+    time: new Date(item.time).toLocaleTimeString(),
+    price: item.price,
+    sma: null,
+    rsi: null
+  }));
 
-    const chart = createChart(chartContainerRef.current, {
-      layout: {
-        textColor: 'black',
-        background: { type: ColorType.Solid, color: 'white' }
-      },
-      width: chartContainerRef.current.clientWidth,
-      height: 400,
-      grid: {
-        vertLines: { color: '#E6E6E6' },
-        horzLines: { color: '#E6E6E6' }
-      }
+  if (indicators.sma) {
+    const smaValues = SMA.calculate({
+      period: 14,
+      values: data.map(d => d.price)
     });
 
-    const candlestickSeries = chart.addCandlestickSeries({
-      upColor: '#26a69a',
-      downColor: '#ef5350',
-      borderVisible: false,
-      wickUpColor: '#26a69a',
-      wickDownColor: '#ef5350'
+    // Pad the beginning of the SMA data with nulls since SMA needs initial data points
+    const smaWithPadding = [...Array(13).fill(null), ...smaValues];
+    chartData.forEach((item, index) => {
+      item.sma = smaWithPadding[index];
+    });
+  }
+
+  if (indicators.rsi) {
+    const rsiValues = RSI.calculate({
+      period: 14,
+      values: data.map(d => d.price)
     });
 
-    // Convert price data to OHLC format
-    const candleData = data.map(item => ({
-      time: Math.floor(new Date(item.time).getTime() / 1000),
-      open: item.price,
-      high: item.price * 1.002, // Simulate high price
-      low: item.price * 0.998,  // Simulate low price
-      close: item.price
-    }));
-
-    candlestickSeries.setData(candleData);
-    setChartInstance(chart);
-
-    // Add SMA indicator if enabled
-    if (indicators.sma) {
-      const smaData = SMA.calculate({
-        period: 14,
-        values: data.map(d => d.price)
-      });
-
-      const smaLineSeries = chart.addBaselineSeries({
-        baseValue: { type: 'price', price: 0 },
-        lineWidth: 2,
-        color: 'rgba(4, 111, 232, 1)'
-      });
-
-      smaLineSeries.setData(
-        smaData.map((value, index) => ({
-          time: Math.floor(new Date(data[index + 13].time).getTime() / 1000),
-          value: value
-        }))
-      );
-    }
-
-    // Handle window resize
-    const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({
-          width: chartContainerRef.current.clientWidth
-        });
-      }
-    };
-
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      chart.remove();
-    };
-  }, [data, indicators.sma]); // Re-create chart when data or SMA indicator changes
+    // Pad the beginning of the RSI data with nulls
+    const rsiWithPadding = [...Array(14).fill(null), ...rsiValues];
+    chartData.forEach((item, index) => {
+      item.rsi = rsiWithPadding[index];
+    });
+  }
 
   return (
     <Card>
@@ -144,7 +103,66 @@ export function TechnicalAnalysis({ symbol, data }: TechnicalAnalysisProps) {
           </div>
         </div>
 
-        <div ref={chartContainerRef} className="w-full h-[400px]" />
+        <div className="h-[400px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="time"
+                tickFormatter={(time) => time}
+                minTickGap={50}
+              />
+              <YAxis
+                yAxisId="price"
+                domain={['auto', 'auto']}
+                tickFormatter={(value) => `$${value.toLocaleString()}`}
+              />
+              {indicators.rsi && (
+                <YAxis
+                  yAxisId="rsi"
+                  orientation="right"
+                  domain={[0, 100]}
+                  tickFormatter={(value) => `${value}%`}
+                />
+              )}
+              <Tooltip
+                formatter={(value: number, name: string) => {
+                  if (name === 'price' || name === 'sma') {
+                    return [`$${value.toLocaleString()}`, name.toUpperCase()];
+                  }
+                  return [value, name.toUpperCase()];
+                }}
+              />
+              <Line
+                type="monotone"
+                dataKey="price"
+                yAxisId="price"
+                stroke="hsl(var(--primary))"
+                dot={false}
+              />
+              {indicators.sma && (
+                <Line
+                  type="monotone"
+                  dataKey="sma"
+                  yAxisId="price"
+                  stroke="#2196F3"
+                  dot={false}
+                  strokeWidth={2}
+                />
+              )}
+              {indicators.rsi && (
+                <Line
+                  type="monotone"
+                  dataKey="rsi"
+                  yAxisId="rsi"
+                  stroke="#FF5722"
+                  dot={false}
+                  strokeWidth={2}
+                />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       </CardContent>
     </Card>
   );
