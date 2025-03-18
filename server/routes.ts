@@ -9,13 +9,13 @@ import { generateTradingStrategy } from "./ai-strategy-service";
 import { algorithmicTradingService } from "./algorithmic-trading-service";
 import type { IncomingMessage } from "http";
 import type { Session } from 'express-session';
+import { URL } from "url";
 
 interface WebSocketWithSession extends WebSocket {
   isAlive: boolean;
   userId?: number;
 }
 
-// Extend Session type properly
 interface CustomSession extends Session {
   passport?: {
     user?: number;
@@ -27,20 +27,21 @@ interface SessionIncomingMessage extends IncomingMessage {
 }
 
 const HEARTBEAT_INTERVAL = 30000;
-const HEARTBEAT_TIMEOUT = 35000;
+
+// Store temporary WS auth tokens with expiration
+const wsTokens = new Map<string, { userId: number; expires: number }>();
+
+const TOKEN_EXPIRY = 30000; // 30 seconds
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Setup authentication first
   setupAuth(app);
 
-  // Setup routes after auth is configured
   app.get("/api/user", (req, res) => {
     console.log("Auth status:", req.isAuthenticated(), "User:", req.user);
     if (!req.isAuthenticated()) return res.sendStatus(401);
     res.json(req.user);
   });
 
-  // Trading routes
   app.get("/api/trades", async (req, res) => {
     if (!req.user) return res.sendStatus(401);
     const trades = await storage.getTrades(req.user.id);
@@ -56,14 +57,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      // Execute order on Coinbase
       await executeOrder(
         validation.data.type,
         validation.data.symbol,
         Number(validation.data.amount)
       );
 
-      // Record trade in our database
       const trade = await storage.createTrade(req.user.id, validation.data);
       await storage.updatePortfolio(
         req.user.id,
@@ -79,7 +78,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Risk metrics endpoint
   app.get("/api/risk-metrics/:symbol", async (req, res) => {
     if (!req.user) return res.sendStatus(401);
 
@@ -93,14 +91,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Portfolio routes
   app.get("/api/portfolio", async (req, res) => {
     if (!req.user) return res.sendStatus(401);
     const portfolio = await storage.getPortfolio(req.user.id);
     res.json(portfolio);
   });
 
-  // Watchlist routes
   app.get("/api/watchlist", async (req, res) => {
     if (!req.user) return res.sendStatus(401);
     const watchlist = await storage.getWatchlist(req.user.id);
@@ -150,7 +146,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Algorithmic trading routes
   app.post("/api/algorithmic-trading/start", async (req, res) => {
     if (!req.user) return res.sendStatus(401);
 
@@ -177,7 +172,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Price Alert routes
   app.get("/api/price-alerts", async (req, res) => {
     if (!req.user) return res.sendStatus(401);
     const alerts = await storage.getPriceAlerts(req.user.id);
@@ -213,7 +207,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.sendStatus(204);
   });
 
-  // Collateral Lending routes
   app.get("/api/loans", async (req, res) => {
     if (!req.user) return res.sendStatus(401);
     const loans = await storage.getCollateralLoans(req.user.id);
@@ -229,7 +222,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      // Verify user has enough collateral
       const portfolio = await storage.getPortfolio(req.user.id);
       const collateralAsset = portfolio.find(
         (p) => p.symbol === validation.data.collateralSymbol
@@ -241,17 +233,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Create the loan
       const loan = await storage.createCollateralLoan(req.user.id, validation.data);
 
-      // Lock the collateral
       await storage.updatePortfolio(
         req.user.id,
         validation.data.collateralSymbol,
         -validation.data.collateralAmount
       );
 
-      // Add borrowed amount to portfolio
       await storage.updatePortfolio(
         req.user.id,
         validation.data.borrowedSymbol,
@@ -282,7 +271,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Active loan not found" });
       }
 
-      // Verify user has enough borrowed asset to repay
       const portfolio = await storage.getPortfolio(req.user.id);
       const borrowedAsset = portfolio.find((p) => p.symbol === loan.borrowedSymbol);
 
@@ -292,17 +280,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Repay the loan
       await storage.repayCollateralLoan(loanId);
 
-      // Return collateral to user
       await storage.updatePortfolio(
         req.user.id,
         loan.collateralSymbol,
         Number(loan.collateralAmount)
       );
 
-      // Remove borrowed amount from portfolio
       await storage.updatePortfolio(
         req.user.id,
         loan.borrowedSymbol,
@@ -317,119 +302,118 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Add WebSocket auth token endpoint
+  app.get("/api/ws-auth", (req, res) => {
+    console.log("WS Auth Request - User:", req.user?.id, "Authenticated:", req.isAuthenticated());
+
+    if (!req.isAuthenticated()) {
+      console.log("WS Auth Failed - User not authenticated");
+      return res.sendStatus(401);
+    }
+
+    const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    wsTokens.set(token, {
+      userId: req.user!.id,
+      expires: Date.now() + TOKEN_EXPIRY
+    });
+
+    console.log("WS Auth Success - Token generated for user:", req.user.id);
+
+    // Clean up expired tokens
+    for (const [key, value] of wsTokens.entries()) {
+      if (value.expires < Date.now()) {
+        wsTokens.delete(key);
+      }
+    }
+
+    res.json({ token });
+  });
+
   const httpServer = createServer(app);
 
-  // Setup WebSocket server with improved error handling and authentication
+  // Setup WebSocket server with token authentication
   const wss = new WebSocketServer({
     server: httpServer,
     path: "/ws",
     verifyClient: async (info, callback) => {
       try {
-        const req = info.req as SessionIncomingMessage;
+        const url = new URL(info.req.url!, "ws://localhost");
+        const token = url.searchParams.get("token");
 
-        // Log detailed authentication information
-        console.log("WebSocket auth check - Headers:", req.headers);
-        console.log("WebSocket auth check - Session:", !!req.session);
-        console.log("WebSocket auth check - User:", req.session?.passport?.user);
+        console.log("WS Connection Attempt - Token:", token);
 
-        if (!req.session?.passport?.user) {
-          console.log("WebSocket connection rejected - No authenticated user");
-          callback(false, 401, 'Unauthorized');
+        if (!token) {
+          console.log("WS Connection Rejected - No token provided");
+          callback(false, 401, "No token provided");
           return;
         }
 
-        // Add rate limiting
-        const userId = req.session.passport.user;
-        const userConnections = clients.get(userId)?.size || 0;
-        if (userConnections >= 5) {
-          console.log(`WebSocket connection rejected - Too many connections for user ${userId}`);
-          callback(false, 429, 'Too Many Connections');
+        const tokenData = wsTokens.get(token);
+        console.log("WS Token Data:", tokenData);
+
+        if (!tokenData || tokenData.expires < Date.now()) {
+          console.log("WS Connection Rejected - Invalid or expired token");
+          wsTokens.delete(token);
+          callback(false, 401, "Invalid or expired token");
           return;
         }
 
-        console.log("WebSocket connection accepted for user:", userId);
+        console.log("WS Connection Accepted - User:", tokenData.userId);
+        (info.req as any).userId = tokenData.userId;
         callback(true);
+
       } catch (error) {
-        console.error("Error in WebSocket verification:", error);
-        callback(false, 500, 'Internal Server Error');
+        console.error("WS Verification Error:", error);
+        callback(false, 500, "Internal Server Error");
       }
     }
   });
 
-  // Keep track of connected clients by user ID with improved connection management
   const clients = new Map<number, Set<WebSocketWithSession>>();
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     try {
-      const sessionReq = req as SessionIncomingMessage;
-      const userId = sessionReq.session?.passport?.user;
-
-      if (!userId) {
-        console.log("WebSocket connection terminated - Invalid user session");
-        ws.close(1008, "Invalid session");
-        return;
-      }
+      const userId = (req as any).userId;
 
       const wsWithSession = ws as WebSocketWithSession;
       wsWithSession.isAlive = true;
       wsWithSession.userId = userId;
 
-      // Initialize user's connection set if it doesn't exist
       if (!clients.has(userId)) {
         clients.set(userId, new Set());
       }
       clients.get(userId)?.add(wsWithSession);
 
-      // Send initial connection confirmation
-      try {
-        wsWithSession.send(JSON.stringify({ 
-          type: "connection_established",
-          userId: userId
-        }));
-      } catch (error) {
-        console.error("Error sending connection confirmation:", error);
-      }
+      wsWithSession.send(JSON.stringify({ type: "connected" }));
 
       wsWithSession.on("pong", () => {
         wsWithSession.isAlive = true;
       });
 
-      wsWithSession.on("error", (error) => {
-        console.error(`WebSocket error for user ${userId}:`, error);
-        wsWithSession.terminate();
-      });
-
-      wsWithSession.on("close", (code, reason) => {
-        console.log(`WebSocket closed for user ${userId}. Code: ${code}, Reason: ${reason}`);
-        const userClients = clients.get(userId);
-        if (userClients) {
-          userClients.delete(wsWithSession);
-          if (userClients.size === 0) {
+      wsWithSession.on("close", () => {
+        const userConnections = clients.get(userId);
+        if (userConnections) {
+          userConnections.delete(wsWithSession);
+          if (userConnections.size === 0) {
             clients.delete(userId);
           }
         }
       });
+
     } catch (error) {
-      console.error("Error in WebSocket connection handler:", error);
-      ws.close(1011, "Unexpected error");
+      console.error("WebSocket connection error:", error);
+      ws.close(1011, "Internal server error");
     }
   });
 
-  // Heartbeat mechanism with improved error handling
   const heartbeat = setInterval(() => {
     wss.clients.forEach((ws: WebSocket) => {
       const wsWithSession = ws as WebSocketWithSession;
       if (!wsWithSession.isAlive) {
-        console.log(`Terminating inactive connection for user ${wsWithSession.userId}`);
         return wsWithSession.terminate();
       }
       wsWithSession.isAlive = false;
-      try {
-        wsWithSession.ping();
-      } catch (error) {
-        console.error("Error sending ping:", error);
-        wsWithSession.terminate();
-      }
+      wsWithSession.ping();
     });
   }, HEARTBEAT_INTERVAL);
 
@@ -437,12 +421,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     clearInterval(heartbeat);
   });
 
-  // Error event handler for the WebSocket server
-  wss.on("error", (error) => {
-    console.error("WebSocket server error:", error);
-  });
-
-  // Expose clients map so price monitoring service can send notifications
   (global as any).priceAlertClients = clients;
 
   return httpServer;

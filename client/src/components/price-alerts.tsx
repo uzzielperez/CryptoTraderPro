@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -17,125 +17,25 @@ import {
 import { Loader2, BellRing, X, WifiOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useWebSocket } from "@/hooks/use-websocket";
 import * as z from 'zod';
 
 type PriceAlertFormData = z.infer<typeof insertPriceAlertSchema>;
 
-const WEBSOCKET_RETRY_INTERVAL = 5000;
-const MAX_RETRIES = 3;
-const BACKOFF_MULTIPLIER = 1.5;
-
 export function PriceAlerts({ symbol }: { symbol: string }) {
   const { toast } = useToast();
-  const [socket, setSocket] = useState<WebSocket | null>(null);
-  const [retryCount, setRetryCount] = useState(0);
-  const [isConnected, setIsConnected] = useState(false);
-  const [retryTimeout, setRetryTimeout] = useState<number>(WEBSOCKET_RETRY_INTERVAL);
-
-  const connectWebSocket = useCallback(() => {
-    if (retryCount >= MAX_RETRIES) {
-      toast({
-        title: "Connection Error",
-        description: "Failed to connect to price alert service. Please refresh the page.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Close existing socket if any
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.close();
-    }
-
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-
-    // First ensure we have a valid session
-    fetch(wsUrl, { 
-      method: 'GET',
-      credentials: 'include',
-      mode: 'cors'
-    }).then(() => {
-      // Create WebSocket with session cookie
-      const ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        setIsConnected(true);
-        setRetryCount(0);
-        setRetryTimeout(WEBSOCKET_RETRY_INTERVAL);
+  const { isConnected } = useWebSocket({
+    onMessage: (data) => {
+      if (data.type === "price_alert") {
         toast({
-          title: "Connected",
-          description: "Price alert service connected successfully.",
+          title: "Price Alert",
+          description: `${data.symbol} has reached ${data.targetPrice}!`,
         });
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const alert = JSON.parse(event.data);
-          if (alert.type === "connection_established") {
-            console.log("WebSocket connection established with server");
-            return;
-          }
-          toast({
-            title: "Price Alert",
-            description: `${alert.symbol} has reached ${alert.targetPrice}!`,
-          });
-        } catch (error) {
-          console.error("Error parsing alert message:", error);
-        }
-      };
-
-      ws.onclose = (event) => {
-        console.log("WebSocket closed with code:", event.code);
-        setIsConnected(false);
-        setSocket(null);
-
-        if (retryCount < MAX_RETRIES) {
-          const nextRetryTimeout = retryTimeout * BACKOFF_MULTIPLIER;
-          setRetryTimeout(nextRetryTimeout);
-          setRetryCount(prev => prev + 1);
-          setTimeout(connectWebSocket, nextRetryTimeout);
-        }
-      };
-
-      ws.onerror = (error) => {
-        console.error("WebSocket error:", error);
-        setIsConnected(false);
-        ws.close();
-      };
-
-      setSocket(ws);
-    }).catch(error => {
-      console.error("Failed to establish WebSocket connection:", error);
-      setIsConnected(false);
-    });
-  }, [toast, retryCount, retryTimeout, socket]);
-
-  useEffect(() => {
-    // Check authentication status before connecting
-    fetch('/api/user', { credentials: 'include' })
-      .then(response => {
-        if (response.ok) {
-          connectWebSocket();
-        } else {
-          console.error('User not authenticated');
-          toast({
-            title: "Authentication Error",
-            description: "Please log in to use price alerts.",
-            variant: "destructive",
-          });
-        }
-      })
-      .catch(error => {
-        console.error('Error checking authentication:', error);
-      });
-
-    return () => {
-      if (socket?.readyState === WebSocket.OPEN) {
-        socket.close();
+        // Refresh alerts list after receiving notification
+        queryClient.invalidateQueries({ queryKey: ["/api/price-alerts"] });
       }
-    };
-  }, [connectWebSocket]);
+    }
+  });
 
   const form = useForm<PriceAlertFormData>({
     resolver: zodResolver(insertPriceAlertSchema),
