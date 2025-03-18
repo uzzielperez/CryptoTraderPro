@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { trades, portfolio } from "@shared/schema";
+import { trades, portfolio, tradingBots, botTrades, paperAccounts, paperPositions } from "@shared/schema";
 import { calculateRiskMetrics } from "./coinbase-service";
 import { executeOrder } from "./coinbase-service";
 import { SMA, RSI, BollingerBands } from "technicalindicators";
@@ -23,7 +23,7 @@ interface StrategyConfig {
     oversoldThreshold?: number;
     overboughtThreshold?: number;
     deviations?: number;
-    period?: number; // Added for Bollinger Bands
+    period?: number;
   };
 }
 
@@ -39,7 +39,7 @@ class AlgorithmicTradingService {
 
   async startStrategy(userId: number, config: StrategyConfig): Promise<void> {
     const strategyKey = `${userId}-${config.symbol}`;
-    
+
     // Initialize strategy state
     this.strategies.set(strategyKey, {
       config,
@@ -68,8 +68,11 @@ class AlgorithmicTradingService {
     try {
       // Get current price from risk metrics
       const metrics = await calculateRiskMetrics(strategy.config.symbol);
-      // Extract current price from metrics
-      const currentPrice = Number(metrics.currentPrice || 0);
+      const currentPrice = Number(metrics.currentPrice);
+
+      if (!currentPrice) {
+        throw new Error("Failed to get current price");
+      }
 
       strategy.priceHistory.push({
         timestamp: Date.now(),
@@ -100,7 +103,7 @@ class AlgorithmicTradingService {
 
   private async evaluateStrategy(strategy: StrategyState): Promise<'buy' | 'sell' | null> {
     const prices = strategy.priceHistory.map(p => p.price);
-    
+
     switch (strategy.config.type) {
       case 'MA_CROSSOVER': {
         const { shortPeriod = 10, longPeriod = 20 } = strategy.config.params;
@@ -173,48 +176,166 @@ class AlgorithmicTradingService {
     currentPrice: number
   ): Promise<void> {
     try {
-      await executeOrder(signal, config.symbol, config.amount);
+      // Get bot configuration to determine mode (paper/live)
+      const [bot] = await db
+        .select()
+        .from(tradingBots)
+        .where(sql`user_id = ${userId} AND symbol = ${config.symbol} AND status = 'active'`);
 
-      // Record the trade with proper types
-      const tradeValues = {
-        user_id: userId,
-        symbol: config.symbol,
-        amount: config.amount.toString(),
-        price: currentPrice.toString(),
-        type: signal,
-      };
+      if (!bot) {
+        throw new Error("No active bot found");
+      }
 
-      // Insert the trade record
-      await db.insert(trades).values(tradeValues);
+      if (bot.mode === 'live') {
+        // Execute real trade
+        await executeOrder(signal, config.symbol, config.amount);
 
-      // Update portfolio
-      const multiplier = signal === 'buy' ? 1 : -1;
-      await db.transaction(async (tx) => {
-        const [position] = await tx
-          .select()
-          .from(portfolio)
-          .where(sql`user_id = ${userId} AND symbol = ${config.symbol}`);
+        // Record the trade
+        const tradeValues = {
+          userId,
+          symbol: config.symbol,
+          amount: config.amount.toString(),
+          price: currentPrice.toString(),
+          type: signal,
+        };
 
-        if (position) {
-          const newAmount = Number(position.amount) + (multiplier * config.amount);
-          if (newAmount === 0) {
-            await tx
-              .delete(portfolio)
-              .where(sql`user_id = ${userId} AND symbol = ${config.symbol}`);
-          } else {
-            await tx
-              .update(portfolio)
-              .set({ amount: newAmount.toString() })
-              .where(sql`user_id = ${userId} AND symbol = ${config.symbol}`);
+        await db.insert(trades).values(tradeValues);
+
+        // Update portfolio
+        const multiplier = signal === 'buy' ? 1 : -1;
+        await db.transaction(async (tx) => {
+          const [position] = await tx
+            .select()
+            .from(portfolio)
+            .where(sql`user_id = ${userId} AND symbol = ${config.symbol}`);
+
+          if (position) {
+            const newAmount = Number(position.amount) + (multiplier * config.amount);
+            if (newAmount === 0) {
+              await tx
+                .delete(portfolio)
+                .where(sql`user_id = ${userId} AND symbol = ${config.symbol}`);
+            } else {
+              await tx
+                .update(portfolio)
+                .set({ amount: newAmount.toString() })
+                .where(sql`user_id = ${userId} AND symbol = ${config.symbol}`);
+            }
+          } else if (signal === 'buy') {
+            await tx.insert(portfolio).values({
+              userId,
+              symbol: config.symbol,
+              amount: config.amount.toString(),
+            });
           }
-        } else if (signal === 'buy') {
-          await tx.insert(portfolio).values({
-            user_id: userId,
-            symbol: config.symbol,
-            amount: config.amount.toString(),
-          });
+        });
+      } else {
+        // Paper trading mode
+        const [paperAccount] = await db
+          .select()
+          .from(paperAccounts)
+          .where(sql`user_id = ${userId}`);
+
+        if (!paperAccount) {
+          throw new Error("Paper trading account not found");
         }
-      });
+
+        // Record paper trade
+        await db.insert(botTrades).values({
+          botId: bot.id,
+          symbol: config.symbol,
+          type: signal,
+          amount: config.amount,
+          price: currentPrice,
+          mode: 'paper'
+        });
+
+        // Update paper positions
+        await db.transaction(async (tx) => {
+          const [position] = await tx
+            .select()
+            .from(paperPositions)
+            .where(sql`account_id = ${paperAccount.id} AND symbol = ${config.symbol}`);
+
+          const tradeValue = config.amount * currentPrice;
+
+          if (signal === 'buy') {
+            // Check if enough balance
+            if (Number(paperAccount.balance) < tradeValue) {
+              throw new Error("Insufficient paper trading balance");
+            }
+
+            // Update balance
+            await tx
+              .update(paperAccounts)
+              .set({ 
+                balance: (Number(paperAccount.balance) - tradeValue).toString(),
+                updatedAt: new Date()
+              })
+              .where(sql`id = ${paperAccount.id}`);
+
+            // Update position
+            if (position) {
+              const newAmount = Number(position.amount) + config.amount;
+              const newAvgPrice = ((Number(position.amount) * Number(position.averagePrice)) + tradeValue) / newAmount;
+
+              await tx
+                .update(paperPositions)
+                .set({ 
+                  amount: newAmount.toString(),
+                  averagePrice: newAvgPrice.toString(),
+                  updatedAt: new Date()
+                })
+                .where(sql`id = ${position.id}`);
+            } else {
+              await tx.insert(paperPositions).values({
+                accountId: paperAccount.id,
+                symbol: config.symbol,
+                amount: config.amount.toString(),
+                averagePrice: currentPrice.toString()
+              });
+            }
+          } else {
+            // Selling
+            if (!position || Number(position.amount) < config.amount) {
+              throw new Error("Insufficient position for paper trading sell");
+            }
+
+            const newAmount = Number(position.amount) - config.amount;
+            const pnl = (currentPrice - Number(position.averagePrice)) * config.amount;
+
+            // Update balance
+            await tx
+              .update(paperAccounts)
+              .set({ 
+                balance: (Number(paperAccount.balance) + tradeValue).toString(),
+                updatedAt: new Date()
+              })
+              .where(sql`id = ${paperAccount.id}`);
+
+            // Update position
+            if (newAmount === 0) {
+              await tx
+                .delete(paperPositions)
+                .where(sql`id = ${position.id}`);
+            } else {
+              await tx
+                .update(paperPositions)
+                .set({ 
+                  amount: newAmount.toString(),
+                  updatedAt: new Date()
+                })
+                .where(sql`id = ${position.id}`);
+            }
+
+            // Update trade with PNL
+            await tx
+              .update(botTrades)
+              .set({ pnl: pnl.toString() })
+              .where(sql`id = currval('bot_trades_id_seq')`);
+          }
+        });
+      }
 
       log(`Successfully executed ${signal} signal for strategy ${userId}-${config.symbol}`);
     } catch (error) {

@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, decimal, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, decimal, timestamp, boolean, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -58,6 +58,47 @@ export const collateralLoans = pgTable("collateral_loans", {
   lastInterestPayment: timestamp("last_interest_payment").notNull().defaultNow(),
 });
 
+export const tradingBots = pgTable("trading_bots", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
+  strategy: text("strategy", { enum: ["mean_reversion", "trend_following", "grid_trading"] }).notNull(),
+  symbol: text("symbol").notNull(),
+  status: text("status", { enum: ["active", "paused", "stopped"] }).notNull().default("stopped"),
+  mode: text("mode", { enum: ["paper", "live"] }).notNull().default("paper"),
+  config: jsonb("config").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const botTrades = pgTable("bot_trades", {
+  id: serial("id").primaryKey(),
+  botId: integer("bot_id").notNull().references(() => tradingBots.id),
+  symbol: text("symbol").notNull(),
+  type: text("type", { enum: ["buy", "sell"] }).notNull(),
+  amount: decimal("amount", { precision: 10, scale: 8 }).notNull(),
+  price: decimal("price", { precision: 10, scale: 2 }).notNull(),
+  mode: text("mode", { enum: ["paper", "live"] }).notNull(),
+  timestamp: timestamp("timestamp").notNull().defaultNow(),
+  pnl: decimal("pnl", { precision: 10, scale: 2 }),
+});
+
+export const paperAccounts = pgTable("paper_accounts", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  balance: decimal("balance", { precision: 10, scale: 2 }).notNull().default("10000"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const paperPositions = pgTable("paper_positions", {
+  id: serial("id").primaryKey(),
+  accountId: integer("account_id").notNull().references(() => paperAccounts.id),
+  symbol: text("symbol").notNull(),
+  amount: decimal("amount", { precision: 10, scale: 8 }).notNull(),
+  averagePrice: decimal("average_price", { precision: 10, scale: 2 }).notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
   password: true,
@@ -98,6 +139,24 @@ export const insertCollateralLoanSchema = createInsertSchema(collateralLoans)
     dueDate: z.date().min(new Date(), "Due date must be in the future"),
   });
 
+export const insertTradingBotSchema = createInsertSchema(tradingBots)
+  .pick({
+    name: true,
+    strategy: true,
+    symbol: true,
+    mode: true,
+    config: true,
+  })
+  .extend({
+    config: z.object({
+      riskPerTrade: z.number().min(0.1).max(100),
+      stopLoss: z.number().optional(),
+      takeProfit: z.number().optional(),
+      timeframe: z.string(),
+      parameters: z.record(z.any()),
+    }),
+  });
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type InsertTrade = z.infer<typeof insertTradeSchema>;
 export type InsertWatchlist = z.infer<typeof insertWatchlistSchema>;
@@ -109,3 +168,8 @@ export type Watchlist = typeof watchlist.$inferSelect;
 export type InsertPriceAlert = z.infer<typeof insertPriceAlertSchema>;
 export type PriceAlert = typeof priceAlerts.$inferSelect;
 export type CollateralLoan = typeof collateralLoans.$inferSelect;
+export type InsertTradingBot = z.infer<typeof insertTradingBotSchema>;
+export type TradingBot = typeof tradingBots.$inferSelect;
+export type BotTrade = typeof botTrades.$inferSelect;
+export type PaperAccount = typeof paperAccounts.$inferSelect;
+export type PaperPosition = typeof paperPositions.$inferSelect;

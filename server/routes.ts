@@ -150,8 +150,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!req.user) return res.sendStatus(401);
 
     try {
-      await algorithmicTradingService.startStrategy(req.user.id, req.body);
-      res.sendStatus(200);
+      const validation = insertTradingBotSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json(validation.error);
+      }
+
+      // Create or update trading bot
+      const bot = await db.insert(tradingBots).values({
+        userId: req.user.id,
+        status: "active",
+        ...validation.data
+      }).returning();
+
+      // Initialize paper trading account if needed
+      if (validation.data.mode === "paper") {
+        const [paperAccount] = await db
+          .select()
+          .from(paperAccounts)
+          .where(sql`user_id = ${req.user.id}`);
+
+        if (!paperAccount) {
+          await db.insert(paperAccounts).values({
+            userId: req.user.id
+          });
+        }
+      }
+
+      // Start the trading strategy
+      await algorithmicTradingService.startStrategy(req.user.id, {
+        type: validation.data.strategy,
+        symbol: validation.data.symbol,
+        amount: validation.data.config.riskPerTrade,
+        interval: 60000, // 1 minute interval
+        params: validation.data.config.parameters
+      });
+
+      res.status(201).json(bot);
     } catch (error) {
       res.status(500).json({
         message: error instanceof Error ? error.message : "Failed to start trading strategy"
@@ -163,7 +197,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!req.user) return res.sendStatus(401);
 
     try {
-      await algorithmicTradingService.stopStrategy(req.user.id, req.body.symbol);
+      const { symbol } = req.body;
+
+      if (!symbol) {
+        return res.status(400).json({ message: "Symbol is required" });
+      }
+
+      await db
+        .update(tradingBots)
+        .set({ status: "stopped" })
+        .where(sql`user_id = ${req.user.id} AND symbol = ${symbol} AND status = 'active'`);
+
+      await algorithmicTradingService.stopStrategy(req.user.id, symbol);
       res.sendStatus(200);
     } catch (error) {
       res.status(500).json({
@@ -172,132 +217,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/price-alerts", async (req, res) => {
+  app.get("/api/algorithmic-trading/bots", async (req, res) => {
     if (!req.user) return res.sendStatus(401);
-    const alerts = await storage.getPriceAlerts(req.user.id);
-    res.json(alerts);
-  });
-
-  app.post("/api/price-alerts", async (req, res) => {
-    if (!req.user) return res.sendStatus(401);
-
-    const validation = insertPriceAlertSchema.safeParse(req.body);
-    if (!validation.success) {
-      return res.status(400).json(validation.error);
-    }
-
-    const alert = await storage.createPriceAlert(req.user.id, validation.data);
-    res.status(201).json(alert);
-  });
-
-  app.delete("/api/price-alerts/:id", async (req, res) => {
-    if (!req.user) return res.sendStatus(401);
-
-    const alertId = parseInt(req.params.id);
-    if (isNaN(alertId)) {
-      return res.status(400).json({ message: "Invalid alert ID" });
-    }
-
-    const alert = await storage.getPriceAlert(alertId);
-    if (!alert || alert.userId !== req.user.id) {
-      return res.status(404).json({ message: "Alert not found" });
-    }
-
-    await storage.deactivatePriceAlert(alertId);
-    res.sendStatus(204);
-  });
-
-  app.get("/api/loans", async (req, res) => {
-    if (!req.user) return res.sendStatus(401);
-    const loans = await storage.getCollateralLoans(req.user.id);
-    res.json(loans);
-  });
-
-  app.post("/api/loans", async (req, res) => {
-    if (!req.user) return res.sendStatus(401);
-
-    const validation = insertCollateralLoanSchema.safeParse(req.body);
-    if (!validation.success) {
-      return res.status(400).json(validation.error);
-    }
 
     try {
-      const portfolio = await storage.getPortfolio(req.user.id);
-      const collateralAsset = portfolio.find(
-        (p) => p.symbol === validation.data.collateralSymbol
-      );
+      const bots = await db
+        .select()
+        .from(tradingBots)
+        .where(sql`user_id = ${req.user.id}`);
 
-      if (!collateralAsset || Number(collateralAsset.amount) < validation.data.collateralAmount) {
-        return res.status(400).json({
-          message: "Insufficient collateral balance",
-        });
-      }
-
-      const loan = await storage.createCollateralLoan(req.user.id, validation.data);
-
-      await storage.updatePortfolio(
-        req.user.id,
-        validation.data.collateralSymbol,
-        -validation.data.collateralAmount
-      );
-
-      await storage.updatePortfolio(
-        req.user.id,
-        validation.data.borrowedSymbol,
-        validation.data.borrowedAmount
-      );
-
-      res.status(201).json(loan);
+      res.json(bots);
     } catch (error) {
       res.status(500).json({
-        message: error instanceof Error ? error.message : "Failed to create loan"
+        message: error instanceof Error ? error.message : "Failed to fetch trading bots"
       });
     }
   });
 
-  app.post("/api/loans/:id/repay", async (req, res) => {
+  app.get("/api/algorithmic-trading/trades/:botId", async (req, res) => {
     if (!req.user) return res.sendStatus(401);
 
-    const loanId = parseInt(req.params.id);
-    if (isNaN(loanId)) {
-      return res.status(400).json({ message: "Invalid loan ID" });
-    }
-
     try {
-      const loans = await storage.getCollateralLoans(req.user.id);
-      const loan = loans.find((l) => l.id === loanId && l.status === "active");
-
-      if (!loan) {
-        return res.status(404).json({ message: "Active loan not found" });
+      const botId = parseInt(req.params.botId);
+      if (isNaN(botId)) {
+        return res.status(400).json({ message: "Invalid bot ID" });
       }
 
-      const portfolio = await storage.getPortfolio(req.user.id);
-      const borrowedAsset = portfolio.find((p) => p.symbol === loan.borrowedSymbol);
+      const [bot] = await db
+        .select()
+        .from(tradingBots)
+        .where(sql`id = ${botId} AND user_id = ${req.user.id}`);
 
-      if (!borrowedAsset || Number(borrowedAsset.amount) < Number(loan.borrowedAmount)) {
-        return res.status(400).json({
-          message: "Insufficient balance to repay loan",
-        });
+      if (!bot) {
+        return res.status(404).json({ message: "Bot not found" });
       }
 
-      await storage.repayCollateralLoan(loanId);
+      const trades = await db
+        .select()
+        .from(botTrades)
+        .where(sql`bot_id = ${botId}`)
+        .orderBy(sql`timestamp DESC`)
+        .limit(100);
 
-      await storage.updatePortfolio(
-        req.user.id,
-        loan.collateralSymbol,
-        Number(loan.collateralAmount)
-      );
-
-      await storage.updatePortfolio(
-        req.user.id,
-        loan.borrowedSymbol,
-        -Number(loan.borrowedAmount)
-      );
-
-      res.sendStatus(200);
+      res.json(trades);
     } catch (error) {
       res.status(500).json({
-        message: error instanceof Error ? error.message : "Failed to repay loan"
+        message: error instanceof Error ? error.message : "Failed to fetch bot trades"
+      });
+    }
+  });
+
+  app.get("/api/paper-trading/account", async (req, res) => {
+    if (!req.user) return res.sendStatus(401);
+
+    try {
+      const [account] = await db
+        .select()
+        .from(paperAccounts)
+        .where(sql`user_id = ${req.user.id}`);
+
+      if (!account) {
+        return res.status(404).json({ message: "Paper trading account not found" });
+      }
+
+      const positions = await db
+        .select()
+        .from(paperPositions)
+        .where(sql`account_id = ${account.id}`);
+
+      res.json({
+        balance: account.balance,
+        positions
+      });
+    } catch (error) {
+      res.status(500).json({
+        message: error instanceof Error ? error.message : "Failed to fetch paper trading account"
       });
     }
   });
